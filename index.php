@@ -9,27 +9,6 @@ function h($value)
     return htmlspecialchars((string) $value, ENT_QUOTES, 'UTF-8');
 }
 
-function rl_thai_error($error)
-{
-    $map = array(
-        'Name is required' => 'ต้องใส่ชื่อ',
-        'At least one hex color is required' => 'ต้องมีรหัสสีอย่างน้อย 1 สี',
-        'File is required' => 'ต้องเลือกไฟล์',
-        'Upload failed' => 'อัปโหลดไม่สำเร็จ',
-        'File is empty or too large' => 'ไฟล์ว่างหรือใหญ่เกินกำหนด',
-        'Expected a .jsx file' => 'ต้องเป็นไฟล์ .jsx',
-        'Expected a .ai file' => 'ต้องเป็นไฟล์ .ai',
-        'Preview must be a PNG or JPEG under 2 MB' => 'รูปตัวอย่างต้องเป็น PNG หรือ JPEG ไม่เกิน 2 MB',
-        'You can only remove your own items' => 'ลบได้เฉพาะรายการของตัวเอง',
-        'Item not found' => 'ไม่พบรายการ',
-        'Type must be script, color, or style' => 'ชนิดต้องเป็น Script, Color หรือ Graphic Style',
-        'Could not store the file' => 'เก็บไฟล์ไม่ได้',
-        'Could not update the catalog' => 'บันทึกรายการไม่ได้',
-        'Storage is not writable' => 'โฟลเดอร์ storage เขียนไม่ได้',
-    );
-    return isset($map[$error]) ? $map[$error] : $error;
-}
-
 function rl_page_next($view, $type)
 {
     $query = array();
@@ -92,16 +71,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 rl_flash($on ? 'เก็บเข้า Library แล้ว' : 'เอาออกจาก Library แล้ว');
             }
         }
-    } elseif ($action === 'upload') {
-        if (rl_config() === null) {
-            rl_flash('Marketplace ยังไม่ได้ตั้งค่า');
-        } else {
-            $result = rl_create_item($actor);
-            rl_flash(!empty($result['ok']) ? 'เพิ่มรายการแล้ว' : rl_thai_error(isset($result['error']) ? $result['error'] : ''));
-        }
-    } elseif ($action === 'delete') {
-        $result = rl_delete_item(isset($_POST['id']) ? (string) $_POST['id'] : '', $actor, false);
-        rl_flash(!empty($result['ok']) ? 'ลบรายการแล้ว' : rl_thai_error(isset($result['error']) ? $result['error'] : ''));
     }
     header('Location: ' . $next);
     exit;
@@ -159,7 +128,7 @@ $filters = array(
             </nav>
         </header>
 
-        <p class="lead">เลือก Script, Color และ Graphic Style จากผู้ใช้คนอื่น กด Star เพื่อเก็บเข้า Library ของตัวเอง</p>
+        <p class="lead">เลือก Script, Color และ Graphic Style แล้วกด Star เพื่อเก็บเข้า Library ของตัวเอง</p>
 
         <?php if ($flash !== '') { ?>
             <p class="note"><?php echo h($flash); ?></p>
@@ -228,70 +197,11 @@ $filters = array(
                             <?php if ($item['type'] !== 'color') { ?>
                                 <a class="download" href="api/download.php?id=<?php echo h($item['id']); ?>">ดาวน์โหลด</a>
                             <?php } ?>
-                            <?php if ($item['mine']) { ?>
-                                <form method="post" action="index.php">
-                                    <input type="hidden" name="csrf" value="<?php echo h($csrf); ?>">
-                                    <input type="hidden" name="action" value="delete">
-                                    <input type="hidden" name="id" value="<?php echo h($item['id']); ?>">
-                                    <input type="hidden" name="next" value="<?php echo h($next); ?>">
-                                    <button class="danger" type="submit" onclick="return confirm('ลบรายการนี้จาก Marketplace?')">ลบ</button>
-                                </form>
-                            <?php } ?>
                         </div>
                     </article>
                 <?php } ?>
             </section>
-
-            <section class="panel">
-                <h2>เพิ่มรายการ</h2>
-                <?php if (!$user) { ?>
-                    <p class="meta">เข้าสู่ระบบด้วย Google เพื่อเพิ่มหรือลบ Script, Color และ Graphic Style</p>
-                <?php } else { ?>
-                    <form class="stack" method="post" action="index.php" enctype="multipart/form-data">
-                        <input type="hidden" name="csrf" value="<?php echo h($csrf); ?>">
-                        <input type="hidden" name="action" value="upload">
-                        <input type="hidden" name="next" value="<?php echo h($next); ?>">
-                        <label>ชนิด
-                            <select name="type" id="item_type">
-                                <option value="script">Script (.jsx)</option>
-                                <option value="color">Color</option>
-                                <option value="style">Graphic Style (.ai)</option>
-                            </select>
-                        </label>
-                        <label>ชื่อ<input name="name" type="text" maxlength="80" required></label>
-                        <label>คำอธิบาย<input name="description" type="text" maxlength="500"></label>
-                        <label id="color_fields" hidden>รหัสสี
-                            <textarea name="colors" id="colors_input" rows="3" placeholder="#E61919, #FFE500, #8B1A2B"></textarea>
-                        </label>
-                        <label id="file_fields">ไฟล์
-                            <input name="file" id="file_input" type="file" accept=".jsx,text/javascript" required>
-                        </label>
-                        <label id="preview_fields" hidden>รูปตัวอย่างคำว่า TEXT
-                            <input name="preview" type="file" accept="image/png,image/jpeg">
-                        </label>
-                        <button class="primary" type="submit">เพิ่ม</button>
-                    </form>
-                <?php } ?>
-            </section>
         <?php } ?>
     </main>
-    <script>
-        var typeInput = document.getElementById('item_type');
-        if (typeInput) {
-            var fileInput = document.getElementById('file_input');
-            var colorsInput = document.getElementById('colors_input');
-            function syncFields() {
-                var type = typeInput.value;
-                document.getElementById('color_fields').hidden = type !== 'color';
-                document.getElementById('file_fields').hidden = type === 'color';
-                document.getElementById('preview_fields').hidden = type !== 'style';
-                colorsInput.required = type === 'color';
-                fileInput.required = type !== 'color';
-                fileInput.accept = type === 'style' ? '.ai,application/postscript' : '.jsx,text/javascript';
-            }
-            typeInput.addEventListener('change', syncFields);
-            syncFields();
-        }
-    </script>
 </body>
 </html>

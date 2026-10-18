@@ -2,7 +2,7 @@
 
 เว็บกลางสำหรับ Script, Color และ Graphic Style ของพาเนล Rocket Launcher ใช้บน Hostinger shared hosting ได้
 
-สมาชิกเข้าสู่ระบบด้วย Google แล้วกด Star เพื่อเก็บรายการเข้า Library ของตัวเอง คนที่ล็อกอินเพิ่มรายการได้ และลบได้เฉพาะของตัวเอง
+เว็บนี้แสดงรายการอย่างเดียว สมาชิกเข้าสู่ระบบด้วย Google แล้วกด Star เพื่อเก็บรายการเข้า Library ของตัวเอง การเพิ่มและลบทำจากพาเนลด้วยโทเคนอัปโหลดเท่านั้น
 
 ## ชนิดรายการ
 
@@ -20,11 +20,11 @@
 | `GET /api/library.php` | รายการที่ผู้ใช้ Star ไว้ ต้องมีเซสชันที่ล็อกอินแล้ว |
 | `GET /api/download.php?id=` | ดาวน์โหลด Script หรือ Graphic Style Color ส่ง JSON ของชุดสี |
 | `GET /api/preview.php?id=` | รูปตัวอย่างของ Graphic Style |
-| `POST /api/upload.php` | เพิ่มรายการ ใช้เซสชันพร้อม `csrf` หรือโทเคนแอดมิน |
+| `POST /api/upload.php` | เพิ่มรายการจากพาเนล ต้องใช้โทเคนอัปโหลด |
 | `POST /api/star.php` | สลับ Star ต้องล็อกอินและส่ง `csrf` |
-| `POST /api/delete.php` | ลบรายการ เจ้าของลบของตัวเองได้ โทเคนแอดมินลบได้ทุกรายการ |
+| `POST /api/delete.php` | ลบรายการจากพาเนล ต้องใช้โทเคนอัปโหลด |
 
-อัปโหลดส่งแบบ `multipart/form-data` ด้วยฟิลด์ `type` (`script`, `color`, `style`), `name`, `description` Color ใช้ฟิลด์ `colors` Graphic Style ใช้ `file` และ `preview` Script ใช้ `file` โทเคนแอดมินส่งเป็นฟิลด์ `token` หรือหัว `X-Upload-Token`
+อัปโหลดส่งแบบ `multipart/form-data` ด้วยฟิลด์ `type` (`script`, `color`, `style`), `name`, `description` Color ใช้ฟิลด์ `colors` Graphic Style ใช้ `file` และ `preview` Script ใช้ `file` โทเคนส่งเป็นฟิลด์ `token` หรือหัว `X-Upload-Token`
 
 ## ขึ้น Hostinger ผ่าน GitHub
 
