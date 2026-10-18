@@ -2,7 +2,7 @@
 
 เว็บกลางสำหรับ Script, Color และ Graphic Style ของพาเนล Rocket Launcher ใช้บน Hostinger shared hosting ได้
 
-เว็บนี้แสดงรายการอย่างเดียว สมาชิกเข้าสู่ระบบด้วย Google แล้วกด Star เพื่อเก็บรายการเข้า Library ของตัวเอง การเพิ่มและลบทำจากพาเนลด้วยโทเคนอัปโหลดเท่านั้น
+เว็บนี้แสดงรายการอย่างเดียว สมาชิกเข้าสู่ระบบด้วย Google แล้วกด Star เพื่อเก็บรายการเข้า Library ของตัวเอง แต่ละรายการอยู่ได้ 10 วัน มีคนดาวน์โหลดไปใช้แล้วจะต่อเวลาอีก 10 วัน รายการที่หมดอายุจะถูกลบ การเพิ่มทำจากพาเนล หลังผู้ใช้กดเชื่อมต่อด้วย Google หนึ่งครั้ง โทเคนจากหน้า setup เป็นของคนดูแลระบบ ใช้ลบรายการ ไม่ต้องให้ผู้ใช้ใส่
 
 ## ชนิดรายการ
 
@@ -18,13 +18,15 @@
 |---|---|
 | `GET /api/list.php` | รายการทั้งหมด เป็น JSON ใส่ `?type=script` `color` หรือ `style` ได้ |
 | `GET /api/library.php` | รายการที่ผู้ใช้ Star ไว้ ต้องมีเซสชันที่ล็อกอินแล้ว |
-| `GET /api/download.php?id=` | ดาวน์โหลด Script หรือ Graphic Style Color ส่ง JSON ของชุดสี |
+| `GET /api/download.php?id=` | ดาวน์โหลด Script หรือ Graphic Style Color ส่ง JSON ของชุดสี การดาวน์โหลดต่ออายุรายการเป็น 10 วันและเพิ่มจำนวนโหลด |
 | `GET /api/preview.php?id=` | รูปตัวอย่างของ Graphic Style |
-| `POST /api/upload.php` | เพิ่มรายการจากพาเนล ต้องใช้โทเคนอัปโหลด |
+| `POST /api/panel.php` | เริ่มเชื่อมพาเนลกับบัญชี Google ส่งฟิลด์ `action=start` |
+| `GET /api/panel.php?device=` | ตรวจว่าผู้ใช้กดอนุญาตบนเว็บแล้วหรือยัง |
+| `POST /api/upload.php` | เพิ่มรายการจากพาเนลที่เชื่อมต่อแล้ว ส่ง `panel_token` คนดูแลส่งโทเคนอัปโหลดแทนได้ |
 | `POST /api/star.php` | สลับ Star ต้องล็อกอินและส่ง `csrf` |
-| `POST /api/delete.php` | ลบรายการจากพาเนล ต้องใช้โทเคนอัปโหลด |
+| `POST /api/delete.php` | ลบรายการ ต้องใช้โทเคนของคนดูแลระบบ |
 
-อัปโหลดส่งแบบ `multipart/form-data` ด้วยฟิลด์ `type` (`script`, `color`, `style`), `name`, `description` Color ใช้ฟิลด์ `colors` Graphic Style ใช้ `file` และ `preview` Script ใช้ `file` โทเคนส่งเป็นฟิลด์ `token` หรือหัว `X-Upload-Token`
+อัปโหลดส่งแบบ `multipart/form-data` ด้วยฟิลด์ `type` (`script`, `color`, `style`), `name`, `description` Color ใช้ฟิลด์ `colors` Graphic Style ใช้ `file` และ `preview` Script ใช้ `file` พาเนลส่ง `panel_token` ที่ได้หลังกดอนุญาต โทเคนของคนดูแลส่งเป็นฟิลด์ `token` หรือหัว `X-Upload-Token`
 
 ## ขึ้น Hostinger ผ่าน GitHub
 
@@ -50,6 +52,9 @@
       "filename": "Gold.ai",
       "bytes": 120000,
       "created": "2026-10-18T03:00:00+00:00",
+      "expires": "2026-10-28T03:00:00+00:00",
+      "days_left": 10,
+      "downloads": 12,
       "colors": [],
       "preview": true,
       "owner_name": "Peerawat",

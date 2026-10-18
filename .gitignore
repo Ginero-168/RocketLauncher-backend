@@ -2,6 +2,7 @@ config.json
 storage/catalog.json
 storage/users.json
 storage/stars.json
+storage/panel.json
 storage/write.lock
 storage/files/*
 !storage/files/.gitkeep

@@ -172,6 +172,9 @@ function rl_public_item($item, $userId = '', $starred = false, $stars = 0, $owne
         'filename' => isset($item['filename']) ? $item['filename'] : '',
         'bytes' => isset($item['bytes']) ? (int) $item['bytes'] : 0,
         'created' => isset($item['created']) ? $item['created'] : '',
+        'expires' => rl_expiry_time($item) > 0 ? gmdate('c', rl_expiry_time($item)) : '',
+        'days_left' => rl_days_left($item),
+        'downloads' => isset($item['downloads']) ? (int) $item['downloads'] : 0,
         'colors' => $colors,
         'preview' => !empty($item['preview']),
         'owner_name' => $ownerName,
@@ -291,6 +294,9 @@ function rl_safe_next($value)
 {
     $value = (string) $value;
     if (preg_match('/^index\.php(\?[A-Za-z0-9_\-=&%\.\+]*)?$/', $value)) {
+        return $value;
+    }
+    if (preg_match('/^auth\/panel\.php\?code=[A-Z2-9]{4}-[A-Z2-9]{4}$/', $value)) {
         return $value;
     }
     return 'index.php';
@@ -555,8 +561,126 @@ function rl_type_rules()
     );
 }
 
+function rl_life_seconds()
+{
+    return 10 * 24 * 60 * 60;
+}
+
+function rl_expiry_time($item)
+{
+    if (isset($item['expires']) && is_string($item['expires']) && $item['expires'] !== '') {
+        $time = strtotime($item['expires']);
+        if ($time !== false) {
+            return $time;
+        }
+    }
+    if (isset($item['created']) && is_string($item['created']) && $item['created'] !== '') {
+        $time = strtotime($item['created']);
+        if ($time !== false) {
+            return $time + rl_life_seconds();
+        }
+    }
+    return 0;
+}
+
+function rl_days_left($item, $now = null)
+{
+    if ($now === null) {
+        $now = time();
+    }
+    $left = rl_expiry_time($item) - $now;
+    if ($left <= 0) {
+        return 0;
+    }
+    return (int) ceil($left / 86400);
+}
+
+function rl_fresh_expiry($now = null)
+{
+    if ($now === null) {
+        $now = time();
+    }
+    return gmdate('c', $now + rl_life_seconds());
+}
+
+function rl_drop_expired()
+{
+    $removed = rl_locked(function () {
+        $now = time();
+        $catalog = rl_catalog();
+        $kept = array();
+        $gone = array();
+        foreach ($catalog['items'] as $item) {
+            if (rl_expiry_time($item) > $now) {
+                $kept[] = $item;
+                continue;
+            }
+            $gone[] = $item;
+        }
+        if (count($gone) === 0) {
+            return array();
+        }
+        $catalog['items'] = $kept;
+        if (!rl_save_catalog($catalog)) {
+            return null;
+        }
+        $ids = array();
+        foreach ($gone as $item) {
+            if (isset($item['id'])) {
+                $ids[$item['id']] = true;
+            }
+        }
+        $stars = rl_stars();
+        $keptStars = array();
+        foreach ($stars['stars'] as $star) {
+            if (!isset($star['item_id']) || empty($ids[$star['item_id']])) {
+                $keptStars[] = $star;
+            }
+        }
+        $stars['stars'] = $keptStars;
+        rl_save_stars($stars);
+        return $gone;
+    });
+    if (!is_array($removed)) {
+        return;
+    }
+    foreach ($removed as $item) {
+        if (!empty($item['stored'])) {
+            rl_unlink_stored($item['stored']);
+        }
+        if (!empty($item['preview'])) {
+            rl_unlink_stored($item['preview']);
+        }
+    }
+}
+
+function rl_renew_item($id)
+{
+    return rl_locked(function () use ($id) {
+        $now = time();
+        $catalog = rl_catalog();
+        foreach ($catalog['items'] as $index => $item) {
+            if (!isset($item['id']) || $item['id'] !== $id) {
+                continue;
+            }
+            if (rl_expiry_time($item) <= $now) {
+                return false;
+            }
+            $item['expires'] = rl_fresh_expiry($now);
+            $item['downloads'] = (isset($item['downloads']) ? (int) $item['downloads'] : 0) + 1;
+            $catalog['items'][$index] = $item;
+            if (!rl_save_catalog($catalog)) {
+                return false;
+            }
+            return $item;
+        }
+        return false;
+    });
+}
+
 function rl_present_catalog($type, $userId, $starredOnly)
 {
+    rl_drop_expired();
     $wanted = rl_normalize_type($type);
     $starIds = $userId !== '' ? rl_star_id_map($userId) : array();
     $counts = rl_star_counts();
@@ -574,6 +698,9 @@ function rl_present_catalog($type, $userId, $starredOnly)
             continue;
         }
         if ($starredOnly && empty($starIds[$item['id']])) {
+            continue;
+        }
+        if (rl_expiry_time($item) <= time()) {
             continue;
         }
         $ownerName = '';
@@ -709,6 +836,8 @@ function rl_create_item($user)
         'bytes' => $bytes,
         'owner_id' => $user ? $user['id'] : '',
         'created' => gmdate('c'),
+        'expires' => rl_fresh_expiry(),
+        'downloads' => 0,
     );
 
     $saved = rl_locked(function () use ($item) {
@@ -807,4 +936,214 @@ function rl_http_request($url, $method, $body, $headers)
         return array('status' => 0, 'body' => '');
     }
     return array('status' => $status, 'body' => $response);
+}
+
+function rl_panel_path()
+{
+    return rl_storage_dir() . '/panel.json';
+}
+
+function rl_panel_store()
+{
+    $data = rl_read_json_file(rl_panel_path(), array('grants' => array(), 'sessions' => array()));
+    if (!isset($data['grants']) || !is_array($data['grants'])) {
+        $data['grants'] = array();
+    }
+    if (!isset($data['sessions']) || !is_array($data['sessions'])) {
+        $data['sessions'] = array();
+    }
+    return $data;
+}
+
+function rl_panel_save($data)
+{
+    return rl_write_json_file(rl_panel_path(), $data);
+}
+
+function rl_panel_valid_code($code)
+{
+    return is_string($code) && (bool) preg_match('/^[A-Z2-9]{4}-[A-Z2-9]{4}$/', $code);
+}
+
+function rl_panel_code()
+{
+    $alphabet = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+    $length = strlen($alphabet) - 1;
+    $raw = '';
+    for ($i = 0; $i < 8; $i++) {
+        $raw .= $alphabet[random_int(0, $length)];
+    }
+    return substr($raw, 0, 4) . '-' . substr($raw, 4, 4);
+}
+
+function rl_panel_prune($data, $now)
+{
+    $grants = array();
+    foreach ($data['grants'] as $grant) {
+        if (isset($grant['expires']) && (int) $grant['expires'] > $now) {
+            $grants[] = $grant;
+        }
+    }
+    $sessions = array();
+    foreach ($data['sessions'] as $session) {
+        if (isset($session['expires']) && (int) $session['expires'] > $now) {
+            $sessions[] = $session;
+        }
+    }
+    if (count($grants) > 40) {
+        $grants = array_slice($grants, -40);
+    }
+    $data['grants'] = $grants;
+    $data['sessions'] = $sessions;
+    return $data;
+}
+
+function rl_panel_start()
+{
+    return rl_locked(function () {
+        $now = time();
+        $data = rl_panel_prune(rl_panel_store(), $now);
+        $used = array();
+        foreach ($data['grants'] as $existing) {
+            if (isset($existing['user_code'])) {
+                $used[$existing['user_code']] = true;
+            }
+        }
+        $code = rl_panel_code();
+        for ($i = 0; $i < 5 && isset($used[$code]); $i++) {
+            $code = rl_panel_code();
+        }
+        $grant = array(
+            'device' => bin2hex(random_bytes(16)),
+            'user_code' => $code,
+            'expires' => $now + 600,
+            'user_id' => '',
+            'name' => '',
+            'token' => '',
+        );
+        $data['grants'][] = $grant;
+        if (!rl_panel_save($data)) {
+            return null;
+        }
+        return $grant;
+    });
+}
+
+function rl_panel_grant($code)
+{
+    if (!rl_panel_valid_code($code)) {
+        return null;
+    }
+    $now = time();
+    foreach (rl_panel_store()['grants'] as $grant) {
+        if (!isset($grant['user_code'], $grant['expires'])) {
+            continue;
+        }
+        if ($grant['user_code'] === $code && (int) $grant['expires'] > $now) {
+            return $grant;
+        }
+    }
+    return null;
+}
+
+function rl_panel_approve($code, $user)
+{
+    if (!rl_panel_valid_code($code) || !is_array($user) || empty($user['id'])) {
+        return false;
+    }
+    $approved = rl_locked(function () use ($code, $user) {
+        $now = time();
+        $data = rl_panel_prune(rl_panel_store(), $now);
+        $found = false;
+        foreach ($data['grants'] as $index => $grant) {
+            if (!isset($grant['user_code']) || $grant['user_code'] !== $code) {
+                continue;
+            }
+            $found = true;
+            if (!empty($grant['token'])) {
+                return isset($grant['user_id']) && $grant['user_id'] === $user['id'];
+            }
+            $token = bin2hex(random_bytes(24));
+            $name = isset($user['name']) ? rl_clean_text($user['name'], 80) : 'Member';
+            if ($name === '') {
+                $name = 'Member';
+            }
+            $grant['user_id'] = $user['id'];
+            $grant['name'] = $name;
+            $grant['token'] = $token;
+            $data['grants'][$index] = $grant;
+            $data['sessions'][] = array(
+                'hash' => hash('sha256', $token),
+                'user_id' => $user['id'],
+                'name' => $name,
+                'expires' => $now + 60 * 60 * 24 * 90,
+            );
+            break;
+        }
+        if (!$found || !rl_panel_save($data)) {
+            return false;
+        }
+        return true;
+    });
+    return $approved === true;
+}
+
+function rl_panel_poll($device)
+{
+    if (!is_string($device) || !preg_match('/^[a-f0-9]{32}$/', $device)) {
+        return array('status' => 'expired');
+    }
+    $now = time();
+    foreach (rl_panel_store()['grants'] as $grant) {
+        if (!isset($grant['device']) || !is_string($grant['device']) || strlen($grant['device']) !== strlen($device)) {
+            continue;
+        }
+        if (!hash_equals($grant['device'], $device)) {
+            continue;
+        }
+        if (!isset($grant['expires']) || (int) $grant['expires'] <= $now) {
+            return array('status' => 'expired');
+        }
+        if (empty($grant['token'])) {
+            return array('status' => 'pending');
+        }
+        return array(
+            'status' => 'approved',
+            'token' => (string) $grant['token'],
+            'name' => isset($grant['name']) && $grant['name'] !== '' ? (string) $grant['name'] : 'Member',
+        );
+    }
+    return array('status' => 'expired');
+}
+
+function rl_panel_user($token)
+{
+    if (!is_string($token) || !preg_match('/^[a-f0-9]{48}$/', $token)) {
+        return null;
+    }
+    $hash = hash('sha256', $token);
+    $now = time();
+    $userId = '';
+    foreach (rl_panel_store()['sessions'] as $session) {
+        if (!isset($session['hash'], $session['expires'], $session['user_id'])) {
+            continue;
+        }
+        if ((int) $session['expires'] <= $now || !is_string($session['hash']) || strlen($session['hash']) !== strlen($hash)) {
+            continue;
+        }
+        if (!hash_equals($session['hash'], $hash)) {
+            continue;
+        }
+        $userId = (string) $session['user_id'];
+        break;
+    }
+    if ($userId === '') {
+        return null;
+    }
+    foreach (rl_users()['users'] as $user) {
+        if (isset($user['id']) && $user['id'] === $userId) {
+            return $user;
+        }
+    }
+    return null;
 }

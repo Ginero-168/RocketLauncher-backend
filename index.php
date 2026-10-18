@@ -180,6 +180,7 @@ $filters = array(
                         <p class="meta">
                             <?php if ($item['owner_name'] !== '') { ?>โดย <?php echo h($item['owner_name']); ?> · <?php } ?>
                             <?php echo (int) $item['stars']; ?> Star
+                            · โหลด <?php echo (int) $item['downloads']; ?>
                             <?php if ($item['bytes'] > 0) { ?> · <?php echo h(rl_size_label($item['bytes'])); ?><?php } ?>
                         </p>
                         <div class="actions">
