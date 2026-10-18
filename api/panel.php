@@ -9,6 +9,21 @@ if ($method === 'OPTIONS') {
 
 if ($method === 'POST') {
     $action = isset($_POST['action']) ? (string) $_POST['action'] : '';
+    if ($action === 'profile') {
+        $user = rl_panel_user(isset($_POST['panel_token']) ? (string) $_POST['panel_token'] : '');
+        if (!$user) {
+            rl_json(array('ok' => false, 'error' => 'Panel session expired'), 401);
+        }
+        $name = isset($user['name']) ? rl_clean_text($user['name'], 80) : 'Member';
+        if ($name === '') {
+            $name = 'Member';
+        }
+        rl_json(array(
+            'ok' => true,
+            'name' => $name,
+            'picture' => rl_google_picture(isset($user['picture']) ? $user['picture'] : ''),
+        ), 200);
+    }
     if ($action !== 'start') {
         rl_json(array('ok' => false, 'error' => 'Unknown action'), 400);
     }
@@ -32,6 +47,7 @@ if ($method === 'GET') {
     if ($poll['status'] === 'approved') {
         $payload['token'] = $poll['token'];
         $payload['name'] = $poll['name'];
+        $payload['picture'] = isset($poll['picture']) ? $poll['picture'] : '';
     }
     rl_json($payload, 200);
 }

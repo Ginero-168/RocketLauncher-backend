@@ -29,7 +29,7 @@ function rl_send_cors()
 {
     header('Access-Control-Allow-Origin: *');
     header('Access-Control-Allow-Methods: GET, POST, OPTIONS');
-    header('Access-Control-Allow-Headers: Content-Type, Authorization, X-Upload-Token');
+    header('Access-Control-Allow-Headers: Content-Type, Authorization, X-Upload-Token, X-Panel-Token');
     if (isset($_SERVER['REQUEST_METHOD']) && $_SERVER['REQUEST_METHOD'] === 'OPTIONS') {
         http_response_code(204);
         exit;
@@ -1107,13 +1107,40 @@ function rl_panel_poll($device)
         if (empty($grant['token'])) {
             return array('status' => 'pending');
         }
+        $picture = '';
+        if (!empty($grant['user_id'])) {
+            foreach (rl_users()['users'] as $user) {
+                if (isset($user['id']) && $user['id'] === $grant['user_id']) {
+                    $picture = rl_google_picture(isset($user['picture']) ? $user['picture'] : '');
+                    break;
+                }
+            }
+        }
         return array(
             'status' => 'approved',
             'token' => (string) $grant['token'],
             'name' => isset($grant['name']) && $grant['name'] !== '' ? (string) $grant['name'] : 'Member',
+            'picture' => $picture,
         );
     }
     return array('status' => 'expired');
+}
+
+function rl_google_picture($value)
+{
+    if (!is_string($value) || strpos($value, 'https://') !== 0) {
+        return '';
+    }
+    $host = parse_url($value, PHP_URL_HOST);
+    if (!is_string($host)) {
+        return '';
+    }
+    $host = strtolower($host);
+    $suffix = '.googleusercontent.com';
+    if ($host !== 'googleusercontent.com' && substr($host, -strlen($suffix)) !== $suffix) {
+        return '';
+    }
+    return $value;
 }
 
 function rl_panel_user($token)
