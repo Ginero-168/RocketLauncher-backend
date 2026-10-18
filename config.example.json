@@ -1,3 +1,6 @@
 {
-    "upload_token": "replace-with-a-long-random-token"
+    "upload_token": "replace-with-a-long-random-token",
+    "base_url": "https://your-domain.example",
+    "google_client_id": "",
+    "google_client_secret": ""
 }

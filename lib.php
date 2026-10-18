@@ -145,16 +145,39 @@ function rl_find_item($id)
     return null;
 }
 
-function rl_public_item($item)
+function rl_normalize_type($type)
 {
+    if ($type === 'appearance' || $type === 'style') {
+        return 'style';
+    }
+    if ($type === 'script' || $type === 'color') {
+        return $type;
+    }
+    return '';
+}
+
+function rl_public_item($item, $userId = '', $starred = false, $stars = 0, $ownerName = '')
+{
+    $type = rl_normalize_type(isset($item['type']) ? $item['type'] : '');
+    $colors = array();
+    if ($type === 'color' && isset($item['colors']) && is_array($item['colors'])) {
+        $colors = array_values($item['colors']);
+    }
+    $ownerId = isset($item['owner_id']) ? (string) $item['owner_id'] : '';
     return array(
         'id' => $item['id'],
-        'type' => $item['type'],
+        'type' => $type,
         'name' => $item['name'],
         'description' => isset($item['description']) ? $item['description'] : '',
-        'filename' => $item['filename'],
+        'filename' => isset($item['filename']) ? $item['filename'] : '',
         'bytes' => isset($item['bytes']) ? (int) $item['bytes'] : 0,
         'created' => isset($item['created']) ? $item['created'] : '',
+        'colors' => $colors,
+        'preview' => !empty($item['preview']),
+        'owner_name' => $ownerName,
+        'starred' => (bool) $starred,
+        'stars' => (int) $stars,
+        'mine' => $userId !== '' && $ownerId !== '' && $ownerId === $userId,
     );
 }
 
@@ -181,4 +204,607 @@ function rl_download_name($name, $extension)
         $name = 'item';
     }
     return $name . '.' . $extension;
+}
+
+function rl_is_https()
+{
+    if (!empty($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off') {
+        return true;
+    }
+    if (isset($_SERVER['HTTP_X_FORWARDED_PROTO'])) {
+        $proto = strtolower(trim(explode(',', (string) $_SERVER['HTTP_X_FORWARDED_PROTO'])[0]));
+        if ($proto === 'https') {
+            return true;
+        }
+    }
+    return isset($_SERVER['SERVER_PORT']) && (string) $_SERVER['SERVER_PORT'] === '443';
+}
+
+function rl_request_base()
+{
+    $host = isset($_SERVER['HTTP_HOST']) ? (string) $_SERVER['HTTP_HOST'] : 'localhost';
+    if (!preg_match('/^[A-Za-z0-9.\-]+(?::\d+)?$/', $host)) {
+        $host = 'localhost';
+    }
+    $script = isset($_SERVER['SCRIPT_NAME']) ? str_replace('\\', '/', (string) $_SERVER['SCRIPT_NAME']) : '';
+    $dir = str_replace('\\', '/', dirname($script));
+    if (preg_match('#/(auth|api)$#', $dir)) {
+        $dir = str_replace('\\', '/', dirname($dir));
+    }
+    if ($dir === '/' || $dir === '.' || $dir === '') {
+        $dir = '';
+    }
+    return (rl_is_https() ? 'https' : 'http') . '://' . $host . $dir;
+}
+
+function rl_valid_base_url($url)
+{
+    return (bool) preg_match('#^https?://[A-Za-z0-9.\-]+(?::\d+)?(?:/[A-Za-z0-9._~/-]*)?$#', $url);
+}
+
+function rl_session_start()
+{
+    if (session_status() === PHP_SESSION_ACTIVE) {
+        return;
+    }
+    $secure = rl_is_https();
+    session_set_cookie_params(array(
+        'lifetime' => 0,
+        'path' => '/',
+        'secure' => $secure,
+        'httponly' => true,
+        'samesite' => 'Lax',
+    ));
+    session_start();
+}
+
+function rl_flash($message = null)
+{
+    rl_session_start();
+    if ($message !== null) {
+        $_SESSION['flash'] = (string) $message;
+        return '';
+    }
+    $text = isset($_SESSION['flash']) ? (string) $_SESSION['flash'] : '';
+    unset($_SESSION['flash']);
+    return $text;
+}
+
+function rl_csrf_token()
+{
+    rl_session_start();
+    if (empty($_SESSION['csrf'])) {
+        $_SESSION['csrf'] = bin2hex(random_bytes(16));
+    }
+    return $_SESSION['csrf'];
+}
+
+function rl_csrf_ok()
+{
+    rl_session_start();
+    $given = isset($_POST['csrf']) ? (string) $_POST['csrf'] : '';
+    $saved = isset($_SESSION['csrf']) ? (string) $_SESSION['csrf'] : '';
+    return $given !== '' && $saved !== '' && hash_equals($saved, $given);
+}
+
+function rl_safe_next($value)
+{
+    $value = (string) $value;
+    if (preg_match('/^index\.php(\?[A-Za-z0-9_\-=&%\.\+]*)?$/', $value)) {
+        return $value;
+    }
+    return 'index.php';
+}
+
+function rl_config_raw()
+{
+    return rl_read_json_file(rl_config_path(), array());
+}
+
+function rl_update_config($patch)
+{
+    $config = rl_config_raw();
+    foreach ($patch as $key => $value) {
+        $config[$key] = $value;
+    }
+    return rl_write_json_file(rl_config_path(), $config);
+}
+
+function rl_base_url()
+{
+    $config = rl_config_raw();
+    if (isset($config['base_url']) && is_string($config['base_url'])) {
+        $base = rtrim(trim($config['base_url']), '/');
+        if (rl_valid_base_url($base)) {
+            return $base;
+        }
+    }
+    return rl_request_base();
+}
+
+function rl_google_redirect_uri()
+{
+    return rl_base_url() . '/auth/callback.php';
+}
+
+function rl_google_ready()
+{
+    $config = rl_config_raw();
+    foreach (array('google_client_id', 'google_client_secret') as $key) {
+        if (!isset($config[$key]) || !is_string($config[$key]) || trim($config[$key]) === '') {
+            return false;
+        }
+    }
+    return true;
+}
+
+function rl_users_path()
+{
+    return rl_storage_dir() . '/users.json';
+}
+
+function rl_stars_path()
+{
+    return rl_storage_dir() . '/stars.json';
+}
+
+function rl_locked($callback)
+{
+    if (!rl_ensure_storage()) {
+        return null;
+    }
+    $handle = fopen(rl_storage_dir() . '/write.lock', 'c');
+    if ($handle === false) {
+        return null;
+    }
+    flock($handle, LOCK_EX);
+    $result = call_user_func($callback);
+    flock($handle, LOCK_UN);
+    fclose($handle);
+    return $result;
+}
+
+function rl_users()
+{
+    $data = rl_read_json_file(rl_users_path(), array('users' => array()));
+    if (!isset($data['users']) || !is_array($data['users'])) {
+        $data['users'] = array();
+    }
+    return $data;
+}
+
+function rl_save_users($data)
+{
+    return rl_write_json_file(rl_users_path(), $data);
+}
+
+function rl_stars()
+{
+    $data = rl_read_json_file(rl_stars_path(), array('stars' => array()));
+    if (!isset($data['stars']) || !is_array($data['stars'])) {
+        $data['stars'] = array();
+    }
+    return $data;
+}
+
+function rl_save_stars($data)
+{
+    return rl_write_json_file(rl_stars_path(), $data);
+}
+
+function rl_current_user()
+{
+    rl_session_start();
+    $id = isset($_SESSION['user_id']) ? (string) $_SESSION['user_id'] : '';
+    if ($id === '') {
+        return null;
+    }
+    foreach (rl_users()['users'] as $user) {
+        if (isset($user['id']) && $user['id'] === $id) {
+            return $user;
+        }
+    }
+    return null;
+}
+
+function rl_login_google_profile($profile)
+{
+    $sub = isset($profile['sub']) ? (string) $profile['sub'] : '';
+    if ($sub === '') {
+        return null;
+    }
+    return rl_locked(function () use ($profile, $sub) {
+        $data = rl_users();
+        $email = isset($profile['email']) ? rl_clean_text($profile['email'], 120) : '';
+        $name = isset($profile['name']) ? rl_clean_text($profile['name'], 80) : '';
+        if ($name === '') {
+            $name = $email !== '' ? $email : 'Member';
+        }
+        $picture = isset($profile['picture']) ? (string) $profile['picture'] : '';
+        if (strpos($picture, 'https://') !== 0) {
+            $picture = '';
+        }
+        foreach ($data['users'] as $index => $user) {
+            if (isset($user['google_sub']) && $user['google_sub'] === $sub) {
+                $user['email'] = $email;
+                $user['name'] = $name;
+                $user['picture'] = $picture;
+                $data['users'][$index] = $user;
+                if (!rl_save_users($data)) {
+                    return null;
+                }
+                return $user;
+            }
+        }
+        $user = array(
+            'id' => rl_new_id(),
+            'google_sub' => $sub,
+            'email' => $email,
+            'name' => $name,
+            'picture' => $picture,
+            'created' => gmdate('c'),
+        );
+        $data['users'][] = $user;
+        if (!rl_save_users($data)) {
+            return null;
+        }
+        return $user;
+    });
+}
+
+function rl_user_map()
+{
+    $map = array();
+    foreach (rl_users()['users'] as $user) {
+        if (isset($user['id'])) {
+            $map[$user['id']] = $user;
+        }
+    }
+    return $map;
+}
+
+function rl_star_counts()
+{
+    $counts = array();
+    foreach (rl_stars()['stars'] as $star) {
+        if (!isset($star['item_id'])) {
+            continue;
+        }
+        $id = $star['item_id'];
+        if (!isset($counts[$id])) {
+            $counts[$id] = 0;
+        }
+        $counts[$id] += 1;
+    }
+    return $counts;
+}
+
+function rl_star_id_map($userId)
+{
+    $map = array();
+    foreach (rl_stars()['stars'] as $star) {
+        if (isset($star['user_id'], $star['item_id']) && $star['user_id'] === $userId) {
+            $map[$star['item_id']] = true;
+        }
+    }
+    return $map;
+}
+
+function rl_toggle_star($userId, $itemId)
+{
+    return rl_locked(function () use ($userId, $itemId) {
+        $data = rl_stars();
+        $kept = array();
+        $removed = false;
+        foreach ($data['stars'] as $star) {
+            if (isset($star['user_id'], $star['item_id']) && $star['user_id'] === $userId && $star['item_id'] === $itemId) {
+                $removed = true;
+                continue;
+            }
+            $kept[] = $star;
+        }
+        if (!$removed) {
+            $kept[] = array(
+                'user_id' => $userId,
+                'item_id' => $itemId,
+                'created' => gmdate('c'),
+            );
+        }
+        $data['stars'] = $kept;
+        if (!rl_save_stars($data)) {
+            return null;
+        }
+        return !$removed;
+    });
+}
+
+function rl_parse_colors($raw)
+{
+    $parts = is_array($raw) ? $raw : preg_split('/[\s,]+/', (string) $raw);
+    $colors = array();
+    if (!is_array($parts)) {
+        return $colors;
+    }
+    foreach ($parts as $part) {
+        $part = strtoupper(trim((string) $part));
+        if ($part === '') {
+            continue;
+        }
+        if ($part[0] !== '#') {
+            $part = '#' . $part;
+        }
+        if (preg_match('/^#[0-9A-F]{3}$/', $part)) {
+            $part = '#' . $part[1] . $part[1] . $part[2] . $part[2] . $part[3] . $part[3];
+        }
+        if (!preg_match('/^#[0-9A-F]{6}$/', $part)) {
+            continue;
+        }
+        $colors[] = $part;
+        if (count($colors) >= 8) {
+            break;
+        }
+    }
+    return $colors;
+}
+
+function rl_type_rules()
+{
+    return array(
+        'script' => array('ext' => 'jsx', 'max' => 2 * 1024 * 1024),
+        'style' => array('ext' => 'ai', 'max' => 40 * 1024 * 1024),
+    );
+}
+
+function rl_present_catalog($type, $userId, $starredOnly)
+{
+    $wanted = rl_normalize_type($type);
+    $starIds = $userId !== '' ? rl_star_id_map($userId) : array();
+    $counts = rl_star_counts();
+    $users = rl_user_map();
+    $items = array();
+    foreach (rl_catalog()['items'] as $item) {
+        if (!isset($item['id'], $item['type'], $item['name'])) {
+            continue;
+        }
+        $norm = rl_normalize_type($item['type']);
+        if ($norm === '') {
+            continue;
+        }
+        if ($wanted !== '' && $norm !== $wanted) {
+            continue;
+        }
+        if ($starredOnly && empty($starIds[$item['id']])) {
+            continue;
+        }
+        $ownerName = '';
+        if (!empty($item['owner_id']) && isset($users[$item['owner_id']]['name'])) {
+            $ownerName = $users[$item['owner_id']]['name'];
+        }
+        $items[] = rl_public_item(
+            $item,
+            $userId,
+            !empty($starIds[$item['id']]),
+            isset($counts[$item['id']]) ? $counts[$item['id']] : 0,
+            $ownerName
+        );
+    }
+    usort($items, function ($a, $b) {
+        return strcmp($b['created'], $a['created']);
+    });
+    return $items;
+}
+
+function rl_store_preview($id, $file)
+{
+    if (!isset($file['error']) || $file['error'] === UPLOAD_ERR_NO_FILE) {
+        return '';
+    }
+    if ($file['error'] !== UPLOAD_ERR_OK) {
+        return false;
+    }
+    $size = isset($file['size']) ? (int) $file['size'] : 0;
+    if ($size < 1 || $size > 2 * 1024 * 1024) {
+        return false;
+    }
+    $info = @getimagesize($file['tmp_name']);
+    if ($info === false || !isset($info['mime'])) {
+        return false;
+    }
+    if ($info['mime'] === 'image/png') {
+        $ext = 'png';
+    } elseif ($info['mime'] === 'image/jpeg') {
+        $ext = 'jpg';
+    } else {
+        return false;
+    }
+    $stored = 'files/' . $id . '.' . $ext;
+    if (!move_uploaded_file($file['tmp_name'], rl_storage_dir() . '/' . $stored)) {
+        return false;
+    }
+    return $stored;
+}
+
+function rl_unlink_stored($stored)
+{
+    if (!is_string($stored) || strpos($stored, 'files/') !== 0) {
+        return;
+    }
+    $path = rl_storage_dir() . '/' . $stored;
+    $realStorage = realpath(rl_files_dir());
+    $realFile = realpath($path);
+    if ($realStorage !== false && $realFile !== false && strpos($realFile, $realStorage . DIRECTORY_SEPARATOR) === 0 && is_file($realFile)) {
+        unlink($realFile);
+    }
+}
+
+function rl_create_item($user)
+{
+    $type = rl_normalize_type(isset($_POST['type']) ? (string) $_POST['type'] : '');
+    if ($type === '') {
+        return array('ok' => false, 'error' => 'Type must be script, color, or style');
+    }
+    $name = rl_clean_text(isset($_POST['name']) ? $_POST['name'] : '', 80);
+    $description = rl_clean_text(isset($_POST['description']) ? $_POST['description'] : '', 500);
+    if ($name === '') {
+        return array('ok' => false, 'error' => 'Name is required');
+    }
+    if (!rl_ensure_storage()) {
+        return array('ok' => false, 'error' => 'Storage is not writable');
+    }
+
+    $id = rl_new_id();
+    $stored = '';
+    $preview = '';
+    $filename = '';
+    $bytes = 0;
+    $colors = array();
+
+    if ($type === 'color') {
+        $colors = rl_parse_colors(isset($_POST['colors']) ? $_POST['colors'] : '');
+        if (count($colors) < 1) {
+            return array('ok' => false, 'error' => 'At least one hex color is required');
+        }
+    } else {
+        $rules = rl_type_rules();
+        $rule = $rules[$type];
+        if (!isset($_FILES['file']) || !is_array($_FILES['file'])) {
+            return array('ok' => false, 'error' => 'File is required');
+        }
+        $file = $_FILES['file'];
+        if (!isset($file['error']) || $file['error'] !== UPLOAD_ERR_OK) {
+            return array('ok' => false, 'error' => 'Upload failed');
+        }
+        $bytes = isset($file['size']) ? (int) $file['size'] : 0;
+        if ($bytes < 1 || $bytes > $rule['max']) {
+            return array('ok' => false, 'error' => 'File is empty or too large');
+        }
+        $original = isset($file['name']) ? (string) $file['name'] : '';
+        $extension = strtolower(pathinfo($original, PATHINFO_EXTENSION));
+        if ($extension !== $rule['ext']) {
+            return array('ok' => false, 'error' => 'Expected a .' . $rule['ext'] . ' file');
+        }
+        $stored = 'files/' . $id . '.' . $rule['ext'];
+        if (!move_uploaded_file($file['tmp_name'], rl_storage_dir() . '/' . $stored)) {
+            return array('ok' => false, 'error' => 'Could not store the file');
+        }
+        $filename = rl_download_name($name, $rule['ext']);
+        if ($type === 'style' && isset($_FILES['preview']) && is_array($_FILES['preview'])) {
+            $preview = rl_store_preview($id, $_FILES['preview']);
+            if ($preview === false) {
+                rl_unlink_stored($stored);
+                return array('ok' => false, 'error' => 'Preview must be a PNG or JPEG under 2 MB');
+            }
+        }
+    }
+
+    $item = array(
+        'id' => $id,
+        'type' => $type,
+        'name' => $name,
+        'description' => $description,
+        'filename' => $filename,
+        'stored' => $stored,
+        'preview' => $preview,
+        'colors' => $colors,
+        'bytes' => $bytes,
+        'owner_id' => $user ? $user['id'] : '',
+        'created' => gmdate('c'),
+    );
+
+    $saved = rl_locked(function () use ($item) {
+        $catalog = rl_catalog();
+        $catalog['items'][] = $item;
+        return rl_save_catalog($catalog);
+    });
+    if (!$saved) {
+        rl_unlink_stored($stored);
+        rl_unlink_stored($preview);
+        return array('ok' => false, 'error' => 'Could not update the catalog');
+    }
+    return array('ok' => true, 'item' => $item);
+}
+
+function rl_delete_item($id, $user, $admin)
+{
+    if (!preg_match('/^[a-f0-9]{16}$/', $id)) {
+        return array('ok' => false, 'error' => 'Missing item id', 'status' => 400);
+    }
+    $result = rl_locked(function () use ($id, $user, $admin) {
+        $catalog = rl_catalog();
+        $kept = array();
+        $removed = null;
+        foreach ($catalog['items'] as $item) {
+            if (isset($item['id']) && $item['id'] === $id) {
+                $removed = $item;
+                continue;
+            }
+            $kept[] = $item;
+        }
+        if ($removed === null) {
+            return array('ok' => false, 'error' => 'Item not found', 'status' => 404);
+        }
+        $ownerId = isset($removed['owner_id']) ? (string) $removed['owner_id'] : '';
+        $owns = $user && $ownerId !== '' && $ownerId === $user['id'];
+        if (!$admin && !$owns) {
+            return array('ok' => false, 'error' => 'You can only remove your own items', 'status' => 403);
+        }
+        $catalog['items'] = $kept;
+        if (!rl_save_catalog($catalog)) {
+            return array('ok' => false, 'error' => 'Could not update the catalog', 'status' => 500);
+        }
+        return array('ok' => true, 'removed' => $removed);
+    });
+    if ($result === null) {
+        return array('ok' => false, 'error' => 'Storage is not writable', 'status' => 500);
+    }
+    if (empty($result['ok'])) {
+        return $result;
+    }
+    $removed = $result['removed'];
+    if (!empty($removed['stored'])) {
+        rl_unlink_stored($removed['stored']);
+    }
+    if (!empty($removed['preview'])) {
+        rl_unlink_stored($removed['preview']);
+    }
+    $stars = rl_locked(function () use ($id) {
+        $data = rl_stars();
+        $kept = array();
+        foreach ($data['stars'] as $star) {
+            if (!isset($star['item_id']) || $star['item_id'] !== $id) {
+                $kept[] = $star;
+            }
+        }
+        $data['stars'] = $kept;
+        return rl_save_stars($data);
+    });
+    if ($stars === null || $stars === false) {
+        return array('ok' => true, 'warning' => 'Item removed, stars may remain');
+    }
+    return array('ok' => true);
+}
+
+function rl_http_request($url, $method, $body, $headers)
+{
+    if (!function_exists('curl_init')) {
+        return array('status' => 0, 'body' => '');
+    }
+    $ch = curl_init($url);
+    $options = array(
+        CURLOPT_RETURNTRANSFER => true,
+        CURLOPT_TIMEOUT => 20,
+        CURLOPT_CUSTOMREQUEST => $method,
+        CURLOPT_HTTPHEADER => $headers,
+    );
+    if ($body !== null) {
+        $options[CURLOPT_POSTFIELDS] = $body;
+    }
+    curl_setopt_array($ch, $options);
+    $response = curl_exec($ch);
+    $status = (int) curl_getinfo($ch, CURLINFO_HTTP_CODE);
+    curl_close($ch);
+    if ($response === false) {
+        return array('status' => 0, 'body' => '');
+    }
+    return array('status' => $status, 'body' => $response);
 }

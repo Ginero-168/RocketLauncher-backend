@@ -16,7 +16,15 @@ if (!preg_match('/^[a-f0-9]{16}$/', $id)) {
 }
 
 $item = rl_find_item($id);
-if ($item === null || !isset($item['stored'])) {
+if ($item === null) {
+    rl_json(array('ok' => false, 'error' => 'Item not found'), 404);
+}
+
+if (rl_normalize_type($item['type']) === 'color') {
+    rl_json(array('ok' => true, 'item' => rl_public_item($item)), 200);
+}
+
+if (!isset($item['stored']) || $item['stored'] === '') {
     rl_json(array('ok' => false, 'error' => 'Item not found'), 404);
 }
 

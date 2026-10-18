@@ -1,5 +1,5 @@
 Options -Indexes
 
-<FilesMatch "\.(php|phtml|phar)$">
+<FilesMatch "\.(php|phtml|phar|json|lock)$">
     Require all denied
 </FilesMatch>

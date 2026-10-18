@@ -6,40 +6,22 @@ if ($_SERVER['REQUEST_METHOD'] !== 'POST' && $_SERVER['REQUEST_METHOD'] !== 'OPT
     rl_json(array('ok' => false, 'error' => 'Method not allowed'), 405);
 }
 
-rl_require_token();
+rl_session_start();
+$token = rl_request_token();
+$user = rl_current_user();
+$admin = false;
+if ($token !== '') {
+    rl_require_token();
+    $admin = true;
+} elseif (!$user || !rl_csrf_ok()) {
+    rl_json(array('ok' => false, 'error' => 'Login required'), 401);
+}
 
 $id = isset($_POST['id']) ? (string) $_POST['id'] : '';
-if (!preg_match('/^[a-f0-9]{16}$/', $id)) {
-    rl_json(array('ok' => false, 'error' => 'Missing item id'), 400);
-}
-
-$catalog = rl_catalog();
-$kept = array();
-$removed = null;
-foreach ($catalog['items'] as $item) {
-    if (isset($item['id']) && $item['id'] === $id) {
-        $removed = $item;
-        continue;
-    }
-    $kept[] = $item;
-}
-
-if ($removed === null) {
-    rl_json(array('ok' => false, 'error' => 'Item not found'), 404);
-}
-
-$catalog['items'] = $kept;
-if (!rl_save_catalog($catalog)) {
-    rl_json(array('ok' => false, 'error' => 'Could not update the catalog'), 500);
-}
-
-if (isset($removed['stored'])) {
-    $path = rl_storage_dir() . '/' . $removed['stored'];
-    $realStorage = realpath(rl_files_dir());
-    $realFile = realpath($path);
-    if ($realStorage !== false && $realFile !== false && strpos($realFile, $realStorage . DIRECTORY_SEPARATOR) === 0 && is_file($realFile)) {
-        unlink($realFile);
-    }
+$result = rl_delete_item($id, $user, $admin);
+if (empty($result['ok'])) {
+    $status = isset($result['status']) ? (int) $result['status'] : 400;
+    rl_json(array('ok' => false, 'error' => $result['error']), $status);
 }
 
 rl_json(array('ok' => true), 200);

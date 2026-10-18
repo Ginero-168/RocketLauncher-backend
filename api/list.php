@@ -10,17 +10,12 @@ if (rl_config() === null) {
     rl_json(array('ok' => false, 'error' => 'Marketplace is not set up'), 503);
 }
 
-$catalog = rl_catalog();
-$items = array();
-foreach ($catalog['items'] as $item) {
-    if (!isset($item['id'], $item['type'], $item['name'], $item['filename'])) {
-        continue;
-    }
-    $items[] = rl_public_item($item);
-}
+rl_session_start();
+$user = rl_current_user();
+$userId = $user ? $user['id'] : '';
+$type = isset($_GET['type']) ? (string) $_GET['type'] : '';
 
-usort($items, function ($a, $b) {
-    return strcmp($b['created'], $a['created']);
-});
-
-rl_json(array('ok' => true, 'items' => $items), 200);
+rl_json(array(
+    'ok' => true,
+    'items' => rl_present_catalog($type, $userId, false),
+), 200);

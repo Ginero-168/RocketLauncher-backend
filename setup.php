@@ -5,8 +5,10 @@ require __DIR__ . '/lib.php';
 $exists = rl_config() !== null;
 $message = '';
 $token = '';
+$rawConfig = rl_config_raw();
+$savedClient = isset($rawConfig['google_client_id']) ? (string) $rawConfig['google_client_id'] : '';
 
-if ($_SERVER['REQUEST_METHOD'] === 'POST' && !$exists) {
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && !$exists && !isset($_POST['google_client_id'])) {
     $token = rl_clean_text(isset($_POST['upload_token']) ? $_POST['upload_token'] : '', 120);
     if (strlen($token) < 16) {
         $token = bin2hex(random_bytes(24));
@@ -17,6 +19,47 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !$exists) {
     } else {
         $exists = true;
         $message = 'ตั้งค่าแล้ว เก็บโทเคนนี้ไว้ในพาเนล หน้านี้จะไม่แสดงโทเคนอีก';
+    }
+}
+
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && $exists && isset($_POST['google_client_id'])) {
+    $config = rl_config();
+    $given = isset($_POST['upload_token']) ? (string) $_POST['upload_token'] : '';
+    if ($config === null || $given === '' || !hash_equals($config['upload_token'], $given)) {
+        $message = 'โทเคนไม่ตรง จึงยังไม่บันทึก Google';
+    } else {
+        $clientId = trim((string) $_POST['google_client_id']);
+        $baseUrl = rtrim(trim((string) $_POST['base_url']), '/');
+        $secret = trim((string) $_POST['google_client_secret']);
+        $raw = rl_config_raw();
+        $hasSecret = isset($raw['google_client_secret']) && trim((string) $raw['google_client_secret']) !== '';
+        if ($clientId === '' || ($secret === '' && !$hasSecret) || !rl_valid_base_url($baseUrl)) {
+            $message = 'ต้องใส่ที่อยู่เว็บที่ขึ้นต้นด้วย http หรือ https, client id และ client secret';
+        } else {
+            $patch = array(
+                'google_client_id' => $clientId,
+                'base_url' => $baseUrl,
+            );
+            if ($secret !== '') {
+                $patch['google_client_secret'] = $secret;
+            }
+            if (!rl_update_config($patch)) {
+                $message = 'เขียน config.json ไม่ได้';
+            } else {
+                $message = 'บันทึก Google login แล้ว ใช้ Redirect URI ด้านล่างใน Google Cloud';
+            }
+        }
+        if ($clientId !== '') {
+            $savedClient = $clientId;
+        }
+    }
+}
+
+$baseValue = rl_base_url();
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['base_url'])) {
+    $postedBase = rtrim(trim((string) $_POST['base_url']), '/');
+    if ($postedBase !== '') {
+        $baseValue = $postedBase;
     }
 }
 
@@ -50,10 +93,19 @@ function h($value)
                     โทเคนสำหรับอัปโหลด
                     <input name="upload_token" type="text" placeholder="เว้นว่างไว้เพื่อสุ่มให้">
                 </label>
-                <button type="submit">สร้าง config.json</button>
+                <button class="primary" type="submit">สร้าง config.json</button>
             </form>
         <?php } else { ?>
-            <p>Marketplace พร้อมแล้ว ลบ <code>setup.php</code> ออกจากเซิร์ฟเวอร์ได้หลังเก็บโทเคน</p>
+            <p>Marketplace พร้อมแล้ว ใส่ Google client ด้านล่าง แล้วค่อยลบ <code>setup.php</code></p>
+            <p>Redirect URI ที่ต้องใส่ใน Google Cloud</p>
+            <p class="token"><?php echo h(rl_google_redirect_uri()); ?></p>
+            <form method="post" class="stack">
+                <label>โทเคนเดิม เพื่อยืนยันว่าเป็นคนตั้งค่า<input name="upload_token" type="password" required></label>
+                <label>ที่อยู่เว็บ<input name="base_url" type="url" placeholder="https://market.example.com" value="<?php echo h($baseValue); ?>" required></label>
+                <label>Google client id<input name="google_client_id" type="text" required value="<?php echo h($savedClient); ?>"></label>
+                <label>Google client secret<input name="google_client_secret" type="password" placeholder="เว้นว่างถ้าไม่เปลี่ยน"></label>
+                <button class="primary" type="submit">บันทึก Google login</button>
+            </form>
             <p><a href="index.php">ไปหน้ารายการ</a></p>
         <?php } ?>
     </main>
