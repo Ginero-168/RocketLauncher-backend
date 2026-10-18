@@ -1,0 +1,10 @@
+Options -Indexes
+DirectoryIndex index.php
+
+<Files "config.json">
+    Require all denied
+</Files>
+
+<Files "catalog.json">
+    Require all denied
+</Files>

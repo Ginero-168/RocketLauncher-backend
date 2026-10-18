@@ -1,0 +1,4 @@
+config.json
+storage/catalog.json
+storage/files/*
+!storage/files/.gitkeep
