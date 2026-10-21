@@ -10,8 +10,7 @@ if (rl_config() === null) {
     rl_json(array('ok' => false, 'error' => 'Marketplace is not set up'), 503);
 }
 
-rl_session_start();
-$user = rl_current_user();
+$user = rl_session_resume() ? rl_current_user() : null;
 $userId = $user ? $user['id'] : '';
 $type = isset($_GET['type']) ? (string) $_GET['type'] : '';
 

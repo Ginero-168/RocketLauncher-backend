@@ -121,7 +121,10 @@ $filters = array(
                         <img class="avatar" src="<?php echo h($user['picture']); ?>" alt="">
                     <?php } ?>
                     <span class="who"><?php echo h($user['name']); ?></span>
-                    <a href="auth/logout.php">ออกจากระบบ</a>
+                    <form class="logout" method="post" action="auth/logout.php">
+                        <input type="hidden" name="csrf" value="<?php echo h($csrf); ?>">
+                        <button type="submit">ออกจากระบบ</button>
+                    </form>
                 <?php } else { ?>
                     <a class="login" href="auth/login.php?next=<?php echo h(rawurlencode($next)); ?>">เข้าสู่ระบบด้วย Google</a>
                 <?php } ?>

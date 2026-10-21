@@ -8,3 +8,7 @@ DirectoryIndex index.php
 <Files "catalog.json">
     Require all denied
 </Files>
+
+<FilesMatch "^(lib\.php|config\.example\.json|README\.md|\.gitignore)$">
+    Require all denied
+</FilesMatch>

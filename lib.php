@@ -209,6 +209,17 @@ function rl_download_name($name, $extension)
     return $name . '.' . $extension;
 }
 
+// Content-Disposition that keeps Thai and other non-ASCII names intact.
+function rl_attachment_header($filename)
+{
+    $filename = str_replace(array('"', "\r", "\n"), '', (string) $filename);
+    $ascii = preg_replace('/[^\x20-\x7E]/', '_', $filename);
+    if ($ascii === '' || $ascii === null) {
+        $ascii = 'download';
+    }
+    return 'Content-Disposition: attachment; filename="' . $ascii . '"; filename*=UTF-8\'\'' . rawurlencode($filename);
+}
+
 function rl_is_https()
 {
     if (!empty($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off') {
@@ -259,6 +270,20 @@ function rl_session_start()
         'samesite' => 'Lax',
     ));
     session_start();
+}
+
+// Read-only pages call this instead of rl_session_start(): a visitor without
+// a session cookie (the panel, a first visit) gets no new session file.
+function rl_session_resume()
+{
+    if (session_status() === PHP_SESSION_ACTIVE) {
+        return true;
+    }
+    if (empty($_COOKIE[session_name()])) {
+        return false;
+    }
+    rl_session_start();
+    return true;
 }
 
 function rl_flash($message = null)
@@ -561,6 +586,63 @@ function rl_type_rules()
     );
 }
 
+// Upload limits; config.json can override them with max_uploads_per_day and
+// max_storage_mb.
+function rl_upload_limits()
+{
+    $config = rl_config_raw();
+    $perDay = isset($config['max_uploads_per_day']) ? (int) $config['max_uploads_per_day'] : 20;
+    $storageMb = isset($config['max_storage_mb']) ? (int) $config['max_storage_mb'] : 2048;
+    return array(
+        'per_day' => $perDay > 0 ? $perDay : 20,
+        'storage' => ($storageMb > 0 ? $storageMb : 2048) * 1024 * 1024,
+    );
+}
+
+function rl_storage_used()
+{
+    $total = 0;
+    foreach (rl_catalog()['items'] as $item) {
+        $total += isset($item['bytes']) ? (int) $item['bytes'] : 0;
+        $total += isset($item['preview_bytes']) ? (int) $item['preview_bytes'] : 0;
+    }
+    return $total;
+}
+
+function rl_uploads_today($userId, $now = null)
+{
+    if ($userId === '') {
+        return 0;
+    }
+    if ($now === null) {
+        $now = time();
+    }
+    $count = 0;
+    foreach (rl_catalog()['items'] as $item) {
+        if (!isset($item['owner_id']) || $item['owner_id'] !== $userId || empty($item['created'])) {
+            continue;
+        }
+        $created = strtotime($item['created']);
+        if ($created !== false && $now - $created < 86400) {
+            $count++;
+        }
+    }
+    return $count;
+}
+
+// The first bytes of an Illustrator file: PDF-compatible (%PDF) or legacy
+// PostScript (%!PS-Adobe).
+function rl_looks_like_ai($path)
+{
+    $handle = @fopen($path, 'rb');
+    if ($handle === false) {
+        return false;
+    }
+    $head = fread($handle, 16);
+    fclose($handle);
+    return is_string($head) && (strpos($head, '%PDF') === 0 || strpos($head, '%!PS-Adobe') === 0);
+}
+
 function rl_life_seconds()
 {
     return 10 * 24 * 60 * 60;
@@ -603,8 +685,23 @@ function rl_fresh_expiry($now = null)
     return gmdate('c', $now + rl_life_seconds());
 }
 
+function rl_has_expired($now)
+{
+    foreach (rl_catalog()['items'] as $item) {
+        if (rl_expiry_time($item) <= $now) {
+            return true;
+        }
+    }
+    return false;
+}
+
 function rl_drop_expired()
 {
+    // Reads are the common case: only take the write lock when something
+    // has actually expired.
+    if (!rl_has_expired(time())) {
+        return;
+    }
     $removed = rl_locked(function () {
         $now = time();
         $catalog = rl_catalog();
@@ -778,6 +875,19 @@ function rl_create_item($user)
     if (!rl_ensure_storage()) {
         return array('ok' => false, 'error' => 'Storage is not writable');
     }
+    $limits = rl_upload_limits();
+    if ($user && rl_uploads_today($user['id']) >= $limits['per_day']) {
+        return array('ok' => false, 'error' => 'Upload limit reached: ' . $limits['per_day'] . ' items a day', 'status' => 429);
+    }
+    $incoming = 0;
+    foreach (array('file', 'preview') as $field) {
+        if (isset($_FILES[$field]['size'])) {
+            $incoming += (int) $_FILES[$field]['size'];
+        }
+    }
+    if (rl_storage_used() + $incoming > $limits['storage']) {
+        return array('ok' => false, 'error' => 'Marketplace storage is full', 'status' => 507);
+    }
 
     $id = rl_new_id();
     $stored = '';
@@ -785,6 +895,7 @@ function rl_create_item($user)
     $filename = '';
     $bytes = 0;
     $colors = array();
+    $previewBytes = 0;
 
     if ($type === 'color') {
         $colors = rl_parse_colors(isset($_POST['colors']) ? $_POST['colors'] : '');
@@ -810,6 +921,9 @@ function rl_create_item($user)
         if ($extension !== $rule['ext']) {
             return array('ok' => false, 'error' => 'Expected a .' . $rule['ext'] . ' file');
         }
+        if ($type === 'style' && !rl_looks_like_ai($file['tmp_name'])) {
+            return array('ok' => false, 'error' => 'This is not an Illustrator file');
+        }
         $stored = 'files/' . $id . '.' . $rule['ext'];
         if (!move_uploaded_file($file['tmp_name'], rl_storage_dir() . '/' . $stored)) {
             return array('ok' => false, 'error' => 'Could not store the file');
@@ -820,6 +934,9 @@ function rl_create_item($user)
             if ($preview === false) {
                 rl_unlink_stored($stored);
                 return array('ok' => false, 'error' => 'Preview must be a PNG or JPEG under 2 MB');
+            }
+            if ($preview !== '') {
+                $previewBytes = (int) $_FILES['preview']['size'];
             }
         }
     }
@@ -834,6 +951,7 @@ function rl_create_item($user)
         'preview' => $preview,
         'colors' => $colors,
         'bytes' => $bytes,
+        'preview_bytes' => $previewBytes,
         'owner_id' => $user ? $user['id'] : '',
         'created' => gmdate('c'),
         'expires' => rl_fresh_expiry(),

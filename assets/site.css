@@ -76,6 +76,21 @@ code {
     text-decoration: none;
 }
 
+.nav .logout { margin: 0; }
+
+.nav .logout button {
+    margin: 0;
+    padding: 6px 10px;
+    border: 0;
+    border-radius: 999px;
+    background: transparent;
+    color: #1c1916;
+    font: inherit;
+    font-size: 13px;
+    font-weight: 700;
+    cursor: pointer;
+}
+
 .nav a.is-on, .filters a.is-on {
     background: #1c1916;
     color: #f8f2e8;

@@ -49,7 +49,7 @@ $filename = isset($item['filename']) ? $item['filename'] : basename($realFile);
 rl_send_cors();
 header('Content-Type: application/octet-stream');
 header('Content-Length: ' . filesize($realFile));
-header('Content-Disposition: attachment; filename="' . str_replace('"', '', $filename) . '"');
+header(rl_attachment_header($filename));
 header('X-Content-Type-Options: nosniff');
 readfile($realFile);
 exit;

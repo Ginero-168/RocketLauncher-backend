@@ -2,5 +2,7 @@
     "upload_token": "replace-with-a-long-random-token",
     "base_url": "https://your-domain.example",
     "google_client_id": "",
-    "google_client_secret": ""
+    "google_client_secret": "",
+    "max_uploads_per_day": 20,
+    "max_storage_mb": 2048
 }

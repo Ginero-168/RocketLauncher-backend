@@ -18,7 +18,7 @@ if ($panelToken !== '') {
     $result = rl_create_item(null);
 }
 if (empty($result['ok'])) {
-    $status = isset($result['error']) && $result['error'] === 'Storage is not writable' ? 500 : 400;
+    $status = isset($result['status']) ? (int) $result['status'] : (isset($result['error']) && $result['error'] === 'Storage is not writable' ? 500 : 400);
     rl_json(array('ok' => false, 'error' => $result['error']), $status);
 }
 
