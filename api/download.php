@@ -22,7 +22,7 @@ if ($item === null || rl_expiry_time($item) <= time()) {
 }
 
 if (rl_normalize_type($item['type']) === 'color') {
-    $renewed = rl_renew_item($id);
+    $renewed = rl_renew_item($id, rl_visitor_key());
     if (is_array($renewed)) {
         $item = $renewed;
     }
@@ -40,7 +40,7 @@ if ($realStorage === false || $realFile === false || strpos($realFile, $realStor
     rl_json(array('ok' => false, 'error' => 'File is missing'), 404);
 }
 
-$renewed = rl_renew_item($id);
+$renewed = rl_renew_item($id, rl_visitor_key());
 if (is_array($renewed)) {
     $item = $renewed;
 }

@@ -1,5 +1,6 @@
 <?php
 
+define('RL_PAGE', 'sub');
 require dirname(__DIR__) . '/lib.php';
 
 rl_session_start();
@@ -11,8 +12,9 @@ if (!rl_google_ready()) {
         header('Location: ../setup.php');
         exit;
     }
-    header('Content-Type: text/html; charset=utf-8');
-    echo '<!doctype html><meta charset="utf-8"><title>Login</title><p>ยังไม่ได้ตั้งค่า Google login</p>';
+    rl_page_headers();
+    echo '<!doctype html><html lang="th"><head><meta charset="utf-8"><title>Login</title><link rel="stylesheet" href="../assets/site.css"></head>';
+    echo '<body><main class="wrap"><p class="kicker">Rocket Launcher</p><h1>ยังไม่ได้ตั้งค่า Google login</h1></main></body></html>';
     exit;
 }
 

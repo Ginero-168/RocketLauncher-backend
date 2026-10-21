@@ -24,8 +24,15 @@ if ($method === 'POST') {
             'picture' => rl_google_picture(isset($user['picture']) ? $user['picture'] : ''),
         ), 200);
     }
+    if ($action === 'logout') {
+        rl_panel_revoke(isset($_POST['panel_token']) ? (string) $_POST['panel_token'] : '');
+        rl_json(array('ok' => true), 200);
+    }
     if ($action !== 'start') {
         rl_json(array('ok' => false, 'error' => 'Unknown action'), 400);
+    }
+    if (rl_rate_limited('panel-start', 20, 600)) {
+        rl_json(array('ok' => false, 'error' => 'Too many connection attempts, try again in a few minutes'), 429);
     }
     $grant = rl_panel_start();
     if (!is_array($grant) || empty($grant['device']) || empty($grant['user_code'])) {

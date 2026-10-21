@@ -1,8 +1,9 @@
 <?php
 
+define('RL_PAGE', 'root');
 require __DIR__ . '/lib.php';
 
-rl_session_start();
+rl_page_headers();
 
 function h($value)
 {
@@ -59,8 +60,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         exit;
     }
     $action = isset($_POST['action']) ? (string) $_POST['action'] : '';
+    $id = isset($_POST['id']) ? (string) $_POST['id'] : '';
     if ($action === 'star') {
-        $id = isset($_POST['id']) ? (string) $_POST['id'] : '';
         if (rl_find_item($id) === null) {
             rl_flash('ไม่พบรายการ');
         } else {
@@ -71,12 +72,26 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 rl_flash($on ? 'เก็บเข้า Library แล้ว' : 'เอาออกจาก Library แล้ว');
             }
         }
+    } elseif ($action === 'delete') {
+        $result = rl_delete_item($id, $actor, false);
+        if (!empty($result['ok'])) {
+            rl_flash('ลบรายการแล้ว');
+        } elseif (isset($result['status']) && (int) $result['status'] === 403) {
+            rl_flash('ลบได้เฉพาะรายการของคุณ');
+        } else {
+            rl_flash('ลบไม่สำเร็จ');
+        }
+    } elseif ($action === 'disconnect') {
+        rl_flash(rl_panel_revoke_user($actor['id']) ? 'ตัดการเชื่อมต่อพาเนลทั้งหมดแล้ว' : 'ตัดการเชื่อมต่อไม่สำเร็จ');
     }
     header('Location: ' . $next);
     exit;
 }
 
 $ready = rl_config() !== null;
+if ($ready) {
+    rl_housekeeping();
+}
 $view = (isset($_GET['view']) && $_GET['view'] === 'library') ? 'library' : 'all';
 $type = rl_normalize_type(isset($_GET['type']) ? (string) $_GET['type'] : '');
 $user = rl_current_user();
@@ -89,7 +104,9 @@ if ($view === 'library' && !$user) {
 }
 
 $items = $ready ? rl_present_catalog($type, $user ? $user['id'] : '', $view === 'library') : array();
-$csrf = rl_csrf_token();
+// Visitors who are not signed in get no session and no token.
+$csrf = $user ? rl_csrf_token() : '';
+$panels = $user ? rl_panel_count($user['id']) : 0;
 
 $filters = array(
     '' => 'ทั้งหมด',
@@ -106,6 +123,7 @@ $filters = array(
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>Rocket Launcher Marketplace</title>
     <link rel="stylesheet" href="assets/site.css">
+    <link rel="icon" href="assets/icon.svg" type="image/svg+xml">
 </head>
 <body>
     <main class="wrap">
@@ -131,7 +149,21 @@ $filters = array(
             </nav>
         </header>
 
-        <p class="lead">เลือก Script, Color และ Graphic Style แล้วกด Star เพื่อเก็บเข้า Library ของตัวเอง</p>
+        <p class="lead">เลือก Script, Color และ Graphic Style แล้วกด Star เพื่อเก็บเข้า Library ของตัวเอง รายการอยู่ได้ 10 วัน และต่ออายุทุกครั้งที่มีคนดาวน์โหลด</p>
+
+        <?php if ($user) { ?>
+            <div class="account">
+                <span>พาเนลที่เชื่อมกับบัญชีนี้ <?php echo (int) $panels; ?> เครื่อง</span>
+                <?php if ($panels > 0) { ?>
+                    <form method="post" action="index.php">
+                        <input type="hidden" name="csrf" value="<?php echo h($csrf); ?>">
+                        <input type="hidden" name="action" value="disconnect">
+                        <input type="hidden" name="next" value="<?php echo h($next); ?>">
+                        <button class="danger" type="submit">ตัดการเชื่อมต่อทั้งหมด</button>
+                    </form>
+                <?php } ?>
+            </div>
+        <?php } ?>
 
         <?php if ($flash !== '') { ?>
             <p class="note"><?php echo h($flash); ?></p>
@@ -167,7 +199,7 @@ $filters = array(
                     <article class="card">
                         <p class="type"><?php echo h(rl_type_label($item['type'])); ?></p>
                         <?php if ($item['type'] === 'style' && $item['preview']) { ?>
-                            <img class="preview" src="api/preview.php?id=<?php echo h($item['id']); ?>" alt="<?php echo h($item['name']); ?>">
+                            <img class="preview" src="api/preview.php?id=<?php echo h($item['id']); ?>" alt="<?php echo h($item['name']); ?>" width="240" height="92" loading="lazy" decoding="async">
                         <?php } ?>
                         <?php if ($item['type'] === 'color' && count($item['colors']) > 0) { ?>
                             <div class="swatches">
@@ -185,6 +217,7 @@ $filters = array(
                             <?php echo (int) $item['stars']; ?> Star
                             · โหลด <?php echo (int) $item['downloads']; ?>
                             <?php if ($item['bytes'] > 0) { ?> · <?php echo h(rl_size_label($item['bytes'])); ?><?php } ?>
+                            <?php if ($item['days_left'] > 0) { ?> · เหลือ <?php echo (int) $item['days_left']; ?> วัน<?php } ?>
                         </p>
                         <div class="actions">
                             <?php if ($user) { ?>
@@ -200,6 +233,18 @@ $filters = array(
                             <?php } ?>
                             <?php if ($item['type'] !== 'color') { ?>
                                 <a class="download" href="api/download.php?id=<?php echo h($item['id']); ?>">ดาวน์โหลด</a>
+                            <?php } ?>
+                            <?php if ($user && $item['mine']) { ?>
+                                <details class="remove">
+                                    <summary>ลบ</summary>
+                                    <form method="post" action="index.php">
+                                        <input type="hidden" name="csrf" value="<?php echo h($csrf); ?>">
+                                        <input type="hidden" name="action" value="delete">
+                                        <input type="hidden" name="id" value="<?php echo h($item['id']); ?>">
+                                        <input type="hidden" name="next" value="<?php echo h($next); ?>">
+                                        <button class="danger" type="submit">ยืนยันลบ</button>
+                                    </form>
+                                </details>
                             <?php } ?>
                         </div>
                     </article>

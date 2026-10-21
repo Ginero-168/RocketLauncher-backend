@@ -1,5 +1,6 @@
 <?php
 
+define('RL_PAGE', 'sub');
 require dirname(__DIR__) . '/lib.php';
 
 rl_session_start();
@@ -11,13 +12,13 @@ function h($value)
 
 function rl_panel_page($title, $body)
 {
-    header('Content-Type: text/html; charset=utf-8');
+    rl_page_headers();
     echo '<!doctype html><html lang="th"><head><meta charset="utf-8">';
     echo '<meta name="viewport" content="width=device-width, initial-scale=1">';
     echo '<title>' . h($title) . '</title>';
-    echo '<link rel="stylesheet" href="../assets/site.css">';
+    echo '<link rel="stylesheet" href="../assets/site.css"><link rel="icon" href="../assets/icon.svg" type="image/svg+xml">';
     echo '</head><body><main class="wrap">';
-    echo '<p class="kicker">TATA</p><h1>' . h($title) . '</h1>';
+    echo '<p class="kicker">Rocket Launcher</p><h1>' . h($title) . '</h1>';
     echo $body;
     echo '</main></body></html>';
     exit;
@@ -41,11 +42,11 @@ if (!$grant) {
     rl_panel_page('เชื่อมต่อพาเนล', '<p class="lead">รหัสนี้หมดอายุแล้ว กลับไปกดเชื่อมต่อในพาเนลอีกครั้ง</p>' . $switch);
 }
 
-if (!empty($grant['token']) && isset($grant['user_id']) && $grant['user_id'] !== $user['id']) {
+if (!empty($grant['user_id']) && $grant['user_id'] !== $user['id']) {
     rl_panel_page('เชื่อมต่อพาเนล', '<p class="lead">รหัสนี้ถูกใช้ด้วยบัญชีอื่นแล้ว</p>' . $switch);
 }
 
-$done = !empty($grant['token']);
+$done = !empty($grant['user_id']);
 $error = '';
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && !$done) {
     if (!rl_csrf_ok()) {
@@ -70,7 +71,10 @@ $form = $note;
 if ($error !== '') {
     $form .= '<p class="note">' . h($error) . '</p>';
 }
-$form .= '<p class="lead">อนุญาตให้พาเนลอัปโหลด Script, ชุดสี และ Graphic Style ในชื่อ ' . h($name) . '</p>';
+$form .= '<p class="lead">พาเนล Illustrator ขอสิทธิ์อัปโหลด Script, ชุดสี และ Graphic Style ในชื่อ ' . h($name) . '</p>';
+$form .= '<p class="code" aria-label="รหัสเชื่อมต่อ">' . h($code) . '</p>';
+// Device-code phishing: someone else can send a link with their own code.
+$form .= '<p class="meta">กดอนุญาตเฉพาะเมื่อรหัสนี้ตรงกับที่พาเนลของคุณแสดงอยู่ ถ้าคุณไม่ได้กดเชื่อมต่อในพาเนลเองเมื่อสักครู่ ให้ปิดหน้านี้</p>';
 $form .= '<form method="post" action="panel.php"><input type="hidden" name="csrf" value="' . h(rl_csrf_token()) . '">';
 $form .= '<input type="hidden" name="code" value="' . h($code) . '">';
 $form .= '<button class="primary" type="submit">อนุญาต</button></form>';

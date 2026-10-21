@@ -1,5 +1,6 @@
 <?php
 
+define('RL_PAGE', 'sub');
 require dirname(__DIR__) . '/lib.php';
 
 rl_session_start();

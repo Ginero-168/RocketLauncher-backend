@@ -10,11 +10,16 @@ if (rl_config() === null) {
     rl_json(array('ok' => false, 'error' => 'Marketplace is not set up'), 503);
 }
 
-$user = rl_session_resume() ? rl_current_user() : null;
-$userId = $user ? $user['id'] : '';
+rl_housekeeping();
+$user = rl_current_user();
 $type = isset($_GET['type']) ? (string) $_GET['type'] : '';
-
-rl_json(array(
+$payload = array(
     'ok' => true,
-    'items' => rl_present_catalog($type, $userId, false),
-), 200);
+    'items' => rl_present_catalog($type, $user ? $user['id'] : '', false),
+);
+if ($user) {
+    // Starred and "mine" are personal: never kept by a shared cache.
+    header('Cache-Control: private, no-store');
+    rl_json($payload, 200);
+}
+rl_json_revalidated($payload);

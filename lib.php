@@ -1,5 +1,9 @@
 <?php
 
+// Errors go to the server log, never into a page or a JSON reply.
+ini_set('display_errors', '0');
+ini_set('log_errors', '1');
+
 function rl_base_dir()
 {
     return __DIR__;
@@ -30,6 +34,7 @@ function rl_send_cors()
     header('Access-Control-Allow-Origin: *');
     header('Access-Control-Allow-Methods: GET, POST, OPTIONS');
     header('Access-Control-Allow-Headers: Content-Type, Authorization, X-Upload-Token, X-Panel-Token');
+    header('X-Content-Type-Options: nosniff');
     if (isset($_SERVER['REQUEST_METHOD']) && $_SERVER['REQUEST_METHOD'] === 'OPTIONS') {
         http_response_code(204);
         exit;
@@ -45,23 +50,85 @@ function rl_json($payload, $status)
     exit;
 }
 
+// A public JSON reply browsers and the panel may keep: they revalidate it
+// every time (no-cache) and get an empty 304 when nothing changed.
+function rl_json_revalidated($payload)
+{
+    $body = json_encode($payload);
+    $etag = '"' . substr(sha1($body), 0, 20) . '"';
+    rl_send_cors();
+    header('Content-Type: application/json; charset=utf-8');
+    header('Cache-Control: no-cache');
+    header('ETag: ' . $etag);
+    if (rl_etag_matches($etag)) {
+        http_response_code(304);
+        exit;
+    }
+    http_response_code(200);
+    echo $body;
+    exit;
+}
+
+function rl_etag_matches($etag)
+{
+    if (!isset($_SERVER['HTTP_IF_NONE_MATCH'])) {
+        return false;
+    }
+    foreach (explode(',', (string) $_SERVER['HTTP_IF_NONE_MATCH']) as $candidate) {
+        $candidate = trim($candidate);
+        if ($candidate === $etag || $candidate === 'W/' . $etag || $candidate === '*') {
+            return true;
+        }
+    }
+    return false;
+}
+
+// HTML pages: nothing may frame them (so the panel "allow" button cannot be
+// clickjacked), no scripts run at all, images come only from here and from
+// Google profile photos.
+function rl_page_headers()
+{
+    header('Content-Type: text/html; charset=utf-8');
+    header('X-Content-Type-Options: nosniff');
+    header('X-Frame-Options: DENY');
+    header('Referrer-Policy: same-origin');
+    header("Content-Security-Policy: default-src 'self'; script-src 'none'; img-src 'self' https://*.googleusercontent.com; style-src 'self' 'unsafe-inline'; object-src 'none'; base-uri 'none'; form-action 'self' https://accounts.google.com; frame-ancestors 'none'");
+}
+
+// A store that exists but cannot be read stops the request instead of being
+// treated as empty (which the next write would save over the real data).
+function rl_storage_failure($path)
+{
+    error_log('Rocket Launcher: cannot read ' . $path);
+    if (defined('RL_PAGE')) {
+        http_response_code(503);
+        rl_page_headers();
+        echo '<!doctype html><html lang="th"><head><meta charset="utf-8"><title>Rocket Launcher Marketplace</title>';
+        echo '<link rel="stylesheet" href="' . (RL_PAGE === 'sub' ? '../' : '') . 'assets/site.css"></head><body><main class="wrap">';
+        echo '<p class="kicker">Rocket Launcher</p><h1>ปิดปรับปรุงชั่วคราว</h1><p class="lead">ระบบเก็บข้อมูลมีปัญหา ลองใหม่อีกครั้งภายหลัง</p></main></body></html>';
+        exit;
+    }
+    rl_json(array('ok' => false, 'error' => 'Storage is damaged'), 503);
+}
+
+// A missing file gives $fallback. A file that exists but cannot be read or
+// parsed gives null, so damage is never mistaken for "empty".
 function rl_read_json_file($path, $fallback)
 {
     if (!is_file($path)) {
         return $fallback;
     }
-    $raw = file_get_contents($path);
-    if ($raw === false || $raw === '') {
-        return $fallback;
+    $raw = @file_get_contents($path);
+    if ($raw === false) {
+        return null;
     }
     $data = json_decode($raw, true);
-    if (!is_array($data)) {
-        return $fallback;
-    }
-    return $data;
+    return is_array($data) ? $data : null;
 }
 
-function rl_write_json_file($path, $data)
+// Written to a temporary file and renamed into place; the previous good
+// version is kept as .bak (not for config.json, which holds secrets).
+function rl_write_json_file($path, $data, $backup = true)
 {
     $json = json_encode($data, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
     if ($json === false) {
@@ -69,14 +136,34 @@ function rl_write_json_file($path, $data)
     }
     $tmp = $path . '.tmp';
     if (file_put_contents($tmp, $json . "\n", LOCK_EX) === false) {
+        @unlink($tmp);
         return false;
+    }
+    if ($backup && is_file($path) && rl_read_json_file($path, null) !== null) {
+        @copy($path, $path . '.bak');
     }
     return rename($tmp, $path);
 }
 
+// Catalog, users, stars and panel sessions: a damaged file falls back to its
+// .bak; with neither readable the request stops (see rl_storage_failure).
+function rl_load_store($path, $fallback)
+{
+    $data = rl_read_json_file($path, $fallback);
+    if ($data !== null) {
+        return $data;
+    }
+    $backup = rl_read_json_file($path . '.bak', null);
+    if ($backup === null) {
+        rl_storage_failure($path);
+    }
+    error_log('Rocket Launcher: ' . basename($path) . ' is damaged, using its backup');
+    return $backup;
+}
+
 function rl_config()
 {
-    $config = rl_read_json_file(rl_config_path(), array());
+    $config = rl_config_raw();
     if (!isset($config['upload_token']) || !is_string($config['upload_token']) || $config['upload_token'] === '') {
         return null;
     }
@@ -85,7 +172,7 @@ function rl_config()
 
 function rl_catalog()
 {
-    $catalog = rl_read_json_file(rl_catalog_path(), array('items' => array()));
+    $catalog = rl_load_store(rl_catalog_path(), array('items' => array()));
     if (!isset($catalog['items']) || !is_array($catalog['items'])) {
         $catalog['items'] = array();
     }
@@ -288,9 +375,12 @@ function rl_session_resume()
 
 function rl_flash($message = null)
 {
-    rl_session_start();
     if ($message !== null) {
+        rl_session_start();
         $_SESSION['flash'] = (string) $message;
+        return '';
+    }
+    if (!rl_session_resume()) {
         return '';
     }
     $text = isset($_SESSION['flash']) ? (string) $_SESSION['flash'] : '';
@@ -329,16 +419,27 @@ function rl_safe_next($value)
 
 function rl_config_raw()
 {
-    return rl_read_json_file(rl_config_path(), array());
+    $config = rl_read_json_file(rl_config_path(), array());
+    return is_array($config) ? $config : array();
+}
+
+// config.json exists but cannot be parsed: setup must not recreate it (that
+// would hand the admin token to whoever opens setup.php first).
+function rl_config_damaged()
+{
+    return is_file(rl_config_path()) && rl_read_json_file(rl_config_path(), array()) === null;
 }
 
 function rl_update_config($patch)
 {
+    if (rl_config_damaged()) {
+        return false;
+    }
     $config = rl_config_raw();
     foreach ($patch as $key => $value) {
         $config[$key] = $value;
     }
-    return rl_write_json_file(rl_config_path(), $config);
+    return rl_write_json_file(rl_config_path(), $config, false);
 }
 
 function rl_base_url()
@@ -395,9 +496,109 @@ function rl_locked($callback)
     return $result;
 }
 
+function rl_client_ip()
+{
+    return isset($_SERVER['REMOTE_ADDR']) ? (string) $_SERVER['REMOTE_ADDR'] : '';
+}
+
+// Key for hashing visitor addresses: nothing readable is stored.
+function rl_secret()
+{
+    $config = rl_config_raw();
+    $token = isset($config['upload_token']) ? (string) $config['upload_token'] : '';
+    return hash('sha256', 'rocket-launcher|' . $token);
+}
+
+function rl_visitor_key()
+{
+    return substr(hash_hmac('sha256', rl_client_ip() . '|' . gmdate('Y-m-d'), rl_secret()), 0, 16);
+}
+
+// True when this address already did $limit of $bucket within $window
+// seconds; otherwise records the attempt. The counters are disposable: a
+// damaged file simply starts over.
+function rl_rate_limited($bucket, $limit, $window)
+{
+    $key = $bucket . ':' . substr(hash_hmac('sha256', rl_client_ip(), rl_secret()), 0, 24);
+    $result = rl_locked(function () use ($key, $limit, $window) {
+        $path = rl_storage_dir() . '/limits.json';
+        $data = rl_read_json_file($path, array());
+        if (!is_array($data)) {
+            $data = array();
+        }
+        $now = time();
+        $recent = array();
+        foreach (isset($data[$key]) && is_array($data[$key]) ? $data[$key] : array() as $time) {
+            if ($now - (int) $time < $window) {
+                $recent[] = (int) $time;
+            }
+        }
+        if (count($recent) >= $limit) {
+            return true;
+        }
+        $recent[] = $now;
+        $data[$key] = $recent;
+        foreach ($data as $name => $times) {
+            if (!is_array($times) || count($times) === 0 || $now - max($times) > 86400) {
+                unset($data[$name]);
+            }
+        }
+        rl_write_json_file($path, $data);
+        return false;
+    });
+    return $result === true;
+}
+
+// At most once an hour, from the first catalog read after it is due: drop
+// expired items, delete stored files that no item points to (only when older
+// than an hour, so an upload in progress is never touched) and prune expired
+// panel grants and sessions. Returns the number of stray files removed.
+function rl_housekeeping($force = false)
+{
+    $marker = rl_storage_dir() . '/housekeeping.lock';
+    $last = is_file($marker) ? (int) @filemtime($marker) : 0;
+    if (!$force && $last > 0 && time() - $last < 3600) {
+        return 0;
+    }
+    if (!rl_ensure_storage() || !@touch($marker)) {
+        return 0;
+    }
+    rl_drop_expired();
+    $referenced = array();
+    foreach (rl_catalog()['items'] as $item) {
+        foreach (array('stored', 'preview') as $key) {
+            if (!empty($item[$key]) && is_string($item[$key])) {
+                $referenced[$item[$key]] = true;
+            }
+        }
+    }
+    $removed = 0;
+    $names = @scandir(rl_files_dir());
+    foreach (is_array($names) ? $names : array() as $name) {
+        $path = rl_files_dir() . '/' . $name;
+        if ($name === '.' || $name === '..' || $name === '.gitkeep' || !is_file($path)) {
+            continue;
+        }
+        if (isset($referenced['files/' . $name]) || time() - (int) @filemtime($path) < 3600) {
+            continue;
+        }
+        rl_unlink_stored('files/' . $name);
+        $removed++;
+    }
+    rl_locked(function () {
+        $data = rl_panel_store();
+        $pruned = rl_panel_prune($data, time());
+        if (count($pruned['grants']) === count($data['grants']) && count($pruned['sessions']) === count($data['sessions'])) {
+            return true;
+        }
+        return rl_panel_save($pruned);
+    });
+    return $removed;
+}
+
 function rl_users()
 {
-    $data = rl_read_json_file(rl_users_path(), array('users' => array()));
+    $data = rl_load_store(rl_users_path(), array('users' => array()));
     if (!isset($data['users']) || !is_array($data['users'])) {
         $data['users'] = array();
     }
@@ -411,7 +612,7 @@ function rl_save_users($data)
 
 function rl_stars()
 {
-    $data = rl_read_json_file(rl_stars_path(), array('stars' => array()));
+    $data = rl_load_store(rl_stars_path(), array('stars' => array()));
     if (!isset($data['stars']) || !is_array($data['stars'])) {
         $data['stars'] = array();
     }
@@ -425,7 +626,9 @@ function rl_save_stars($data)
 
 function rl_current_user()
 {
-    rl_session_start();
+    if (!rl_session_resume()) {
+        return null;
+    }
     $id = isset($_SESSION['user_id']) ? (string) $_SESSION['user_id'] : '';
     if ($id === '') {
         return null;
@@ -643,6 +846,13 @@ function rl_looks_like_ai($path)
     return is_string($head) && (strpos($head, '%PDF') === 0 || strpos($head, '%!PS-Adobe') === 0);
 }
 
+// Scripts are text: a NUL byte means a binary file was renamed to .jsx.
+function rl_looks_like_text($path)
+{
+    $raw = @file_get_contents($path);
+    return is_string($raw) && $raw !== '' && strpos($raw, "\0") === false;
+}
+
 function rl_life_seconds()
 {
     return 10 * 24 * 60 * 60;
@@ -751,9 +961,11 @@ function rl_drop_expired()
     }
 }
 
-function rl_renew_item($id)
+// A download keeps the item for another 10 days and counts once per visitor
+// per day, so reloading a link cannot inflate the count.
+function rl_renew_item($id, $visitor = '')
 {
-    return rl_locked(function () use ($id) {
+    return rl_locked(function () use ($id, $visitor) {
         $now = time();
         $catalog = rl_catalog();
         foreach ($catalog['items'] as $index => $item) {
@@ -763,8 +975,21 @@ function rl_renew_item($id)
             if (rl_expiry_time($item) <= $now) {
                 return false;
             }
+            $today = gmdate('Y-m-d', $now);
+            $seen = isset($item['seen'], $item['seen_day']) && $item['seen_day'] === $today && is_array($item['seen']) ? $item['seen'] : array();
+            $repeat = $visitor !== '' && in_array($visitor, $seen, true);
+            if ($repeat && rl_expiry_time($item) - $now > rl_life_seconds() - 86400) {
+                return $item;
+            }
             $item['expires'] = rl_fresh_expiry($now);
-            $item['downloads'] = (isset($item['downloads']) ? (int) $item['downloads'] : 0) + 1;
+            if (!$repeat) {
+                $item['downloads'] = (isset($item['downloads']) ? (int) $item['downloads'] : 0) + 1;
+                if ($visitor !== '' && count($seen) < 2000) {
+                    $seen[] = $visitor;
+                }
+            }
+            $item['seen_day'] = $today;
+            $item['seen'] = $seen;
             $catalog['items'][$index] = $item;
             if (!rl_save_catalog($catalog)) {
                 return false;
@@ -924,6 +1149,9 @@ function rl_create_item($user)
         if ($type === 'style' && !rl_looks_like_ai($file['tmp_name'])) {
             return array('ok' => false, 'error' => 'This is not an Illustrator file');
         }
+        if ($type === 'script' && !rl_looks_like_text($file['tmp_name'])) {
+            return array('ok' => false, 'error' => 'A script must be a text file');
+        }
         $stored = 'files/' . $id . '.' . $rule['ext'];
         if (!move_uploaded_file($file['tmp_name'], rl_storage_dir() . '/' . $stored)) {
             return array('ok' => false, 'error' => 'Could not store the file');
@@ -1063,7 +1291,7 @@ function rl_panel_path()
 
 function rl_panel_store()
 {
-    $data = rl_read_json_file(rl_panel_path(), array('grants' => array(), 'sessions' => array()));
+    $data = rl_load_store(rl_panel_path(), array('grants' => array(), 'sessions' => array()));
     if (!isset($data['grants']) || !is_array($data['grants'])) {
         $data['grants'] = array();
     }
@@ -1108,8 +1336,9 @@ function rl_panel_prune($data, $now)
             $sessions[] = $session;
         }
     }
-    if (count($grants) > 40) {
-        $grants = array_slice($grants, -40);
+    // A hard cap on pending connections; starts are also rate limited per address.
+    if (count($grants) > 400) {
+        $grants = array_slice($grants, -400);
     }
     $data['grants'] = $grants;
     $data['sessions'] = $sessions;
@@ -1164,6 +1393,8 @@ function rl_panel_grant($code)
     return null;
 }
 
+// A grant is approved once, by one account. Its token is handed to the panel
+// exactly once (rl_panel_poll) and only its hash is kept as the session.
 function rl_panel_approve($code, $user)
 {
     if (!rl_panel_valid_code($code) || !is_array($user) || empty($user['id'])) {
@@ -1178,8 +1409,8 @@ function rl_panel_approve($code, $user)
                 continue;
             }
             $found = true;
-            if (!empty($grant['token'])) {
-                return isset($grant['user_id']) && $grant['user_id'] === $user['id'];
+            if (!empty($grant['user_id'])) {
+                return $grant['user_id'] === $user['id'];
             }
             $token = bin2hex(random_bytes(24));
             $name = isset($user['name']) ? rl_clean_text($user['name'], 80) : 'Member';
@@ -1194,6 +1425,7 @@ function rl_panel_approve($code, $user)
                 'hash' => hash('sha256', $token),
                 'user_id' => $user['id'],
                 'name' => $name,
+                'created' => $now,
                 'expires' => $now + 60 * 60 * 24 * 90,
             );
             break;
@@ -1212,36 +1444,112 @@ function rl_panel_poll($device)
         return array('status' => 'expired');
     }
     $now = time();
+    $match = null;
     foreach (rl_panel_store()['grants'] as $grant) {
         if (!isset($grant['device']) || !is_string($grant['device']) || strlen($grant['device']) !== strlen($device)) {
             continue;
         }
-        if (!hash_equals($grant['device'], $device)) {
-            continue;
+        if (hash_equals($grant['device'], $device)) {
+            $match = $grant;
+            break;
         }
-        if (!isset($grant['expires']) || (int) $grant['expires'] <= $now) {
-            return array('status' => 'expired');
-        }
-        if (empty($grant['token'])) {
-            return array('status' => 'pending');
-        }
-        $picture = '';
-        if (!empty($grant['user_id'])) {
-            foreach (rl_users()['users'] as $user) {
-                if (isset($user['id']) && $user['id'] === $grant['user_id']) {
-                    $picture = rl_google_picture(isset($user['picture']) ? $user['picture'] : '');
-                    break;
-                }
-            }
-        }
-        return array(
-            'status' => 'approved',
-            'token' => (string) $grant['token'],
-            'name' => isset($grant['name']) && $grant['name'] !== '' ? (string) $grant['name'] : 'Member',
-            'picture' => $picture,
-        );
     }
-    return array('status' => 'expired');
+    if ($match === null || !isset($match['expires']) || (int) $match['expires'] <= $now) {
+        return array('status' => 'expired');
+    }
+    if (empty($match['user_id'])) {
+        return array('status' => 'pending');
+    }
+    // Approved: hand the token over once and forget it.
+    $claimed = rl_locked(function () use ($device) {
+        $data = rl_panel_store();
+        foreach ($data['grants'] as $index => $grant) {
+            if (!isset($grant['device']) || !is_string($grant['device']) || !hash_equals($grant['device'], $device)) {
+                continue;
+            }
+            if (empty($grant['token'])) {
+                return null;
+            }
+            $token = (string) $grant['token'];
+            $grant['token'] = '';
+            $grant['claimed'] = time();
+            $data['grants'][$index] = $grant;
+            return rl_panel_save($data) ? array('token' => $token, 'grant' => $grant) : null;
+        }
+        return null;
+    });
+    if (!is_array($claimed)) {
+        return array('status' => 'expired');
+    }
+    $picture = '';
+    foreach (rl_users()['users'] as $user) {
+        if (isset($user['id']) && $user['id'] === $claimed['grant']['user_id']) {
+            $picture = rl_google_picture(isset($user['picture']) ? $user['picture'] : '');
+            break;
+        }
+    }
+    return array(
+        'status' => 'approved',
+        'token' => $claimed['token'],
+        'name' => isset($claimed['grant']['name']) && $claimed['grant']['name'] !== '' ? (string) $claimed['grant']['name'] : 'Member',
+        'picture' => $picture,
+    );
+}
+
+// Signing out in the panel ends that panel's session on the server too.
+function rl_panel_revoke($token)
+{
+    if (!is_string($token) || !preg_match('/^[a-f0-9]{48}$/', $token)) {
+        return false;
+    }
+    $hash = hash('sha256', $token);
+    return rl_locked(function () use ($hash) {
+        $data = rl_panel_store();
+        $kept = array();
+        foreach ($data['sessions'] as $session) {
+            if (isset($session['hash']) && is_string($session['hash']) && hash_equals($session['hash'], $hash)) {
+                continue;
+            }
+            $kept[] = $session;
+        }
+        if (count($kept) === count($data['sessions'])) {
+            return true;
+        }
+        $data['sessions'] = $kept;
+        return rl_panel_save($data);
+    }) === true;
+}
+
+// The website's "disconnect every panel" button.
+function rl_panel_revoke_user($userId)
+{
+    if (!is_string($userId) || $userId === '') {
+        return false;
+    }
+    return rl_locked(function () use ($userId) {
+        $data = rl_panel_store();
+        $kept = array();
+        foreach ($data['sessions'] as $session) {
+            if (isset($session['user_id']) && $session['user_id'] === $userId) {
+                continue;
+            }
+            $kept[] = $session;
+        }
+        $data['sessions'] = $kept;
+        return rl_panel_save($data);
+    }) === true;
+}
+
+function rl_panel_count($userId)
+{
+    $count = 0;
+    $now = time();
+    foreach (rl_panel_store()['sessions'] as $session) {
+        if (isset($session['user_id'], $session['expires']) && $session['user_id'] === $userId && (int) $session['expires'] > $now) {
+            $count++;
+        }
+    }
+    return $count;
 }
 
 function rl_google_picture($value)

@@ -6,13 +6,13 @@ if ($_SERVER['REQUEST_METHOD'] !== 'GET' && $_SERVER['REQUEST_METHOD'] !== 'OPTI
     rl_json(array('ok' => false, 'error' => 'Method not allowed'), 405);
 }
 
-rl_session_start();
 $user = rl_current_user();
 if (!$user) {
     rl_json(array('ok' => false, 'error' => 'Login required'), 401);
 }
 
 $type = isset($_GET['type']) ? (string) $_GET['type'] : '';
+header('Cache-Control: private, no-store');
 rl_json(array(
     'ok' => true,
     'items' => rl_present_catalog($type, $user['id'], true),

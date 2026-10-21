@@ -1,19 +1,31 @@
 <?php
 
+define('RL_PAGE', 'root');
 require __DIR__ . '/lib.php';
+
+rl_page_headers();
+
+function rl_setup_notice($status, $title, $message)
+{
+    http_response_code($status);
+    echo '<!doctype html><html lang="th"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">';
+    echo '<title>Setup Marketplace</title><link rel="stylesheet" href="assets/site.css"><link rel="icon" href="assets/icon.svg" type="image/svg+xml"></head><body><main class="wrap">';
+    echo '<p class="kicker">Rocket Launcher</p><h1>' . htmlspecialchars($title, ENT_QUOTES, 'UTF-8') . '</h1>';
+    echo '<p class="lead">' . $message . '</p><p><a href="index.php">ไปหน้ารายการ</a></p></main></body></html>';
+    exit;
+}
+
+// A damaged config.json is never recreated here: that would hand a new
+// admin token to whoever opened this page first.
+if (rl_config_damaged()) {
+    rl_setup_notice(503, 'config.json อ่านไม่ได้', 'แก้หรือกู้ <code>config.json</code> ใน File Manager ก่อน หน้านี้จะไม่เขียนทับไฟล์เดิม');
+}
 
 // Once Google login is configured this page does nothing: it cannot be used
 // to guess the admin token or to point logins somewhere else. Change
 // config.json in the hosting file manager instead, and delete this file.
 if (rl_config() !== null && rl_google_ready()) {
-    http_response_code(403);
-    header('Content-Type: text/html; charset=utf-8');
-    echo '<!doctype html><html lang="th"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">';
-    echo '<title>Setup Marketplace</title><link rel="stylesheet" href="assets/site.css"></head><body><main class="wrap">';
-    echo '<p class="kicker">Rocket Launcher</p><h1>ตั้งค่าเสร็จแล้ว</h1>';
-    echo '<p class="lead">หน้านี้ปิดแล้ว ลบ <code>setup.php</code> ออกจากเซิร์ฟเวอร์ได้เลย ถ้าต้องเปลี่ยนค่าให้แก้ <code>config.json</code> ใน File Manager</p>';
-    echo '<p><a href="index.php">ไปหน้ารายการ</a></p></main></body></html>';
-    exit;
+    rl_setup_notice(403, 'ตั้งค่าเสร็จแล้ว', 'หน้านี้ปิดแล้ว ลบ <code>setup.php</code> ออกจากเซิร์ฟเวอร์ได้เลย ถ้าต้องเปลี่ยนค่าให้แก้ <code>config.json</code> ใน File Manager');
 }
 
 $exists = rl_config() !== null;
@@ -22,18 +34,21 @@ $token = '';
 $rawConfig = rl_config_raw();
 $savedClient = isset($rawConfig['google_client_id']) ? (string) $rawConfig['google_client_id'] : '';
 
-if ($_SERVER['REQUEST_METHOD'] === 'POST' && !$exists && !isset($_POST['google_client_id'])) {
+// The first run only ever creates a config.json that does not exist yet.
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && !$exists && !is_file(rl_config_path()) && !isset($_POST['google_client_id'])) {
     $token = rl_clean_text(isset($_POST['upload_token']) ? $_POST['upload_token'] : '', 120);
     if (strlen($token) < 16) {
         $token = bin2hex(random_bytes(24));
     }
-    if (!rl_ensure_storage() || !rl_write_json_file(rl_config_path(), array('upload_token' => $token))) {
+    if (!rl_ensure_storage() || !rl_write_json_file(rl_config_path(), array('upload_token' => $token), false)) {
         $message = 'เขียน config.json ไม่ได้ ตรวจสิทธิ์โฟลเดอร์บน Hostinger';
         $token = '';
     } else {
         $exists = true;
-        $message = 'ตั้งค่าแล้ว เก็บโทเคนนี้ไว้ในพาเนล หน้านี้จะไม่แสดงโทเคนอีก';
+        $message = 'ตั้งค่าแล้ว เก็บโทเคนนี้ไว้ ใช้ยืนยันตอนใส่ Google login และลบรายการ หน้านี้จะไม่แสดงโทเคนอีก';
     }
+} elseif ($_SERVER['REQUEST_METHOD'] === 'POST' && !$exists && !isset($_POST['google_client_id'])) {
+    $message = 'มี config.json อยู่แล้วแต่ไม่มีโทเคน แก้ไฟล์ใน File Manager';
 }
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && $exists && isset($_POST['google_client_id'])) {
@@ -89,7 +104,7 @@ function h($value)
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>Setup Marketplace</title>
-    <link rel="stylesheet" href="assets/site.css">
+    <link rel="stylesheet" href="assets/site.css"><link rel="icon" href="assets/icon.svg" type="image/svg+xml">
 </head>
 <body>
     <main class="wrap">
