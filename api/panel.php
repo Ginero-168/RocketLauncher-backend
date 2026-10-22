@@ -31,7 +31,7 @@ if ($method === 'POST') {
     if ($action !== 'start') {
         rl_json(array('ok' => false, 'error' => 'Unknown action'), 400);
     }
-    if (rl_rate_limited('panel-start', 20, 600)) {
+    if (rl_rate_limited('panel-start', rl_settings()['panel_starts_per_10min'], 600)) {
         rl_json(array('ok' => false, 'error' => 'Too many connection attempts, try again in a few minutes'), 429);
     }
     $grant = rl_panel_start();

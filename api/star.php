@@ -14,6 +14,9 @@ if (!$user) {
 if (!rl_csrf_ok()) {
     rl_json(array('ok' => false, 'error' => 'Invalid session'), 403);
 }
+if (rl_settings()['maintenance'] && !rl_is_admin($user)) {
+    rl_json(array('ok' => false, 'error' => 'The Marketplace is in maintenance'), 503);
+}
 
 $id = isset($_POST['id']) ? (string) $_POST['id'] : '';
 if (rl_find_item($id) === null) {

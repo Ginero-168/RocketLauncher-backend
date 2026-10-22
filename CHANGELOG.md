@@ -1,5 +1,35 @@
 # Changelog
 
+## 2026-10-22 — homepage, Admin, central AI
+
+### Homepage
+- New `index.php`: a download button for the panel's signed `.zxp` (version, size and date from
+  the uploaded file), a 30-second intro video recorded from the real panel, the panel's features
+  and the three install steps. The catalog moved to `market.php`; old `index.php?view=` and
+  `?type=` links redirect there.
+- The whole site uses the panel's look: monochrome HUD, full-colour glass buttons, mono type.
+
+### Admin
+- `admin.php`: claim it once with the setup token; admins can add and remove admins (never the
+  last one). Settings: item life in days, maximum script / style / preview size, uploads per
+  member per day, total storage, panel connection starts, which kinds are accepted, maintenance
+  mode, `X-Forwarded-For` trust (with a diagnostics block to decide), maximum release size.
+- Upload the panel's `.zxp`: it must be a signed `com.tata.pro` package; its version is read from
+  the manifest and it replaces the previous download (`download.php`).
+- Delete any item, disconnect a member's panels, and a log of every change.
+
+### Central AI
+- `api/ai.php`: connected panels use AI through the website's Replicate key, set in Admin, with
+  the model, a per-member daily quota, a site-wide daily quota and a prompt size limit. Requests
+  that fail to start are not counted; slow answers are polled by id, only by their owner.
+  Replicate's own error text (which can echo the key) never reaches the panel.
+- `api/info.php`: limits, accepted kinds, AI status and the current release for the panel and the
+  homepage (ETag, 304 when unchanged).
+
+### Developer
+- `php tests/run.php`: 147 checks, now with a fake Replicate server, Admin permissions and
+  settings, maintenance mode, and release upload and download.
+
 ## 2026-10-22
 
 ### Security

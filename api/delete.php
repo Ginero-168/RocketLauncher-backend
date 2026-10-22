@@ -14,6 +14,9 @@ if ($panelToken !== '') {
     if (!$user) {
         rl_json(array('ok' => false, 'error' => 'Panel session expired'), 401);
     }
+    if (rl_settings()['maintenance'] && !rl_is_admin($user)) {
+        rl_json(array('ok' => false, 'error' => 'The Marketplace is in maintenance'), 503);
+    }
     $result = rl_delete_item($id, $user, false);
 } else {
     rl_require_token();

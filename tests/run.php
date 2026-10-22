@@ -192,6 +192,56 @@ function file_with($dir, $name, $bytes)
     return $path;
 }
 
+
+// A stand-in for api.replicate.com (tests/fake-replicate.php).
+function fake_replicate()
+{
+    $dir = sys_get_temp_dir() . '/rl-fake-' . bin2hex(random_bytes(4));
+    @mkdir($dir, 0777, true);
+    $GLOBALS['dirs'][] = $dir;
+    $socket = stream_socket_server('tcp://127.0.0.1:0');
+    $port = (int) substr(strrchr(stream_socket_get_name($socket, false), ':'), 1);
+    fclose($socket);
+    $env = array_merge(getenv(), array('FAKE_REPLICATE_LOG' => $dir . '/requests.log'));
+    $proc = proc_open(array(PHP_BINARY, '-S', '127.0.0.1:' . $port, __DIR__ . '/fake-replicate.php'),
+        array(array('pipe', 'r'), array('file', $dir . '/server.log', 'a'), array('file', $dir . '/server.log', 'a')), $pipes, $dir, $env);
+    $GLOBALS['servers'][] = $proc;
+    for ($i = 0; $i < 100; $i++) {
+        $probe = @fsockopen('127.0.0.1', $port, $errno, $errstr, 0.1);
+        if ($probe) {
+            fclose($probe);
+            break;
+        }
+        usleep(50000);
+    }
+    return array('base' => 'http://127.0.0.1:' . $port, 'log' => $dir . '/requests.log');
+}
+
+function fake_requests($fake)
+{
+    $out = array();
+    foreach (preg_split('/\n/', (string) @file_get_contents($fake['log'])) as $line) {
+        if (trim($line) !== '') {
+            $out[] = json_decode($line, true);
+        }
+    }
+    return $out;
+}
+
+// A .zxp as ZXPSignCmd makes it: CSXS/manifest.xml plus META-INF/signatures.xml.
+function make_zxp($path, $bundle, $version, $signed)
+{
+    $zip = new ZipArchive();
+    $zip->open($path, ZipArchive::CREATE | ZipArchive::OVERWRITE);
+    $zip->addFromString('CSXS/manifest.xml', '<ExtensionManifest ExtensionBundleId="' . $bundle . '" ExtensionBundleVersion="' . $version . '"></ExtensionManifest>');
+    $zip->addFromString('index.html', '<!doctype html>');
+    if ($signed) {
+        $zip->addFromString('META-INF/signatures.xml', '<signatures/>');
+    }
+    $zip->close();
+    return $path;
+}
+
 $png = base64_decode('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==');
 $ready = array(
     'upload_token' => 'admin-token-0123456789abcdef',
@@ -241,7 +291,7 @@ check('stored paths and visitor hashes are never published', strpos($res['body']
 check('list rejects other methods', http('DELETE', $base . '/api/list.php')['status'] === 405);
 
 echo "Website\n";
-$page = http('GET', $base . '/index.php');
+$page = http('GET', $base . '/market.php');
 $csp = header_of($page, 'content-security-policy');
 check('the home page lists the items', $page['status'] === 200 && strpos($page['body'], 'Gold') !== false && strpos($page['body'], 'สวัสดี Swap') !== false);
 check('pages cannot be framed and run no scripts', strpos($csp, "frame-ancestors 'none'") !== false && strpos($csp, "script-src 'none'") !== false && header_of($page, 'x-frame-options') === 'DENY');
@@ -249,14 +299,14 @@ check('anonymous page views create no session', header_of($page, 'set-cookie') =
 check('cards show the days left and lazy previews', strpos($page['body'], 'เหลือ 5 วัน') !== false && strpos($page['body'], 'loading="lazy"') !== false);
 check('visitors see no delete buttons', strpos($page['body'], 'value="delete"') === false);
 $mike = signed_in($site, 'u1');
-$page = http('GET', $base . '/index.php', array('cookie' => $mike['cookie']));
+$page = http('GET', $base . '/market.php', array('cookie' => $mike['cookie']));
 check('a member sees delete only on their own item', substr_count($page['body'], 'value="delete"') === 1 && strpos($page['body'], 'value="aaaaaaaaaaaaaaa1"') !== false);
 check('a member sees how many panels are connected', strpos($page['body'], 'พาเนลที่เชื่อมกับบัญชีนี้ 0 เครื่อง') !== false);
-$res = http('POST', $base . '/index.php', array('cookie' => $mike['cookie'], 'fields' => array('action' => 'delete', 'id' => 'aaaaaaaaaaaaaaa2', 'csrf' => $mike['csrf'], 'next' => 'index.php')));
+$res = http('POST', $base . '/market.php', array('cookie' => $mike['cookie'], 'fields' => array('action' => 'delete', 'id' => 'aaaaaaaaaaaaaaa2', 'csrf' => $mike['csrf'], 'next' => 'market.php')));
 check('a member cannot delete someone else\'s item', $res['status'] === 302 && read_json($dir . '/storage/catalog.json')['items'][1]['id'] === 'aaaaaaaaaaaaaaa2');
-$res = http('POST', $base . '/index.php', array('cookie' => $mike['cookie'], 'fields' => array('action' => 'delete', 'id' => 'aaaaaaaaaaaaaaa1', 'csrf' => 'wrong', 'next' => 'index.php')));
+$res = http('POST', $base . '/market.php', array('cookie' => $mike['cookie'], 'fields' => array('action' => 'delete', 'id' => 'aaaaaaaaaaaaaaa1', 'csrf' => 'wrong', 'next' => 'market.php')));
 check('a delete without the CSRF token does nothing', count(read_json($dir . '/storage/catalog.json')['items']) === 3);
-$res = http('POST', $base . '/index.php', array('cookie' => $mike['cookie'], 'fields' => array('action' => 'delete', 'id' => 'aaaaaaaaaaaaaaa1', 'csrf' => $mike['csrf'], 'next' => 'index.php')));
+$res = http('POST', $base . '/market.php', array('cookie' => $mike['cookie'], 'fields' => array('action' => 'delete', 'id' => 'aaaaaaaaaaaaaaa1', 'csrf' => $mike['csrf'], 'next' => 'market.php')));
 $left = array_map(function ($i) { return $i['id']; }, read_json($dir . '/storage/catalog.json')['items']);
 check('a member deletes their own item and its file', !in_array('aaaaaaaaaaaaaaa1', $left, true) && !is_file($dir . '/storage/files/aaaaaaaaaaaaaaa1.jsx'));
 $res = http('GET', $base . '/auth/logout.php', array('cookie' => $mike['cookie']));
@@ -305,12 +355,12 @@ check('the token is handed over only once', http('GET', $base . '/api/panel.php?
 check('the server keeps only a hash of the token', strpos((string) file_get_contents($dir . '/storage/panel.json'), $token) === false);
 $profile = http('POST', $base . '/api/panel.php', array('fields' => array('action' => 'profile', 'panel_token' => $token)));
 check('a connected panel reads its profile', $profile['status'] === 200 && $profile['json']['name'] === 'Nok');
-$page = http('GET', $base . '/index.php', array('cookie' => $nok['cookie']));
+$page = http('GET', $base . '/market.php', array('cookie' => $nok['cookie']));
 check('the website counts the connected panel', strpos($page['body'], 'พาเนลที่เชื่อมกับบัญชีนี้ 1 เครื่อง') !== false);
 http('POST', $base . '/api/panel.php', array('fields' => array('action' => 'logout', 'panel_token' => $token)));
 check('signing out in the panel ends its session', http('POST', $base . '/api/panel.php', array('fields' => array('action' => 'profile', 'panel_token' => $token)))['status'] === 401);
 $second = panel_token($site, 'u2', 'Nok');
-http('POST', $base . '/index.php', array('cookie' => $nok['cookie'], 'fields' => array('action' => 'disconnect', 'csrf' => $nok['csrf'], 'next' => 'index.php')));
+http('POST', $base . '/market.php', array('cookie' => $nok['cookie'], 'fields' => array('action' => 'disconnect', 'csrf' => $nok['csrf'], 'next' => 'market.php')));
 check('the website disconnects every panel', http('POST', $base . '/api/panel.php', array('fields' => array('action' => 'profile', 'panel_token' => $second)))['status'] === 401);
 $codes = array();
 for ($i = 0; $i < 19; $i++) {
@@ -425,12 +475,171 @@ http('GET', $house['base'] . '/api/list.php');
 check('stray files older than an hour are deleted', !is_file($house['dir'] . '/storage/files/cccccccccccccc02.jsx'));
 check('files of live items and uploads in progress are kept', is_file($house['dir'] . '/storage/files/cccccccccccccc01.jsx') && is_file($house['dir'] . '/storage/files/cccccccccccccc03.jsx'));
 
+
+echo "Homepage\n";
+$home = site($ready);
+$res = http('GET', $home['base'] . '/');
+check('the homepage answers without a session', $res['status'] === 200 && header_of($res, 'set-cookie') === '' && strpos(header_of($res, 'content-security-policy'), "frame-ancestors 'none'") !== false);
+check('without a release the download button says it is coming', strpos($res['body'], 'ไฟล์ติดตั้งกำลังจะมา') !== false && strpos($res['body'], 'href="download.php"') === false);
+check('the homepage lists the panel features and links the Marketplace', strpos($res['body'], 'ในพาเนลมีอะไรบ้าง') !== false && strpos($res['body'], 'href="market.php"') !== false);
+check('the intro video plays muted with controls, poster and both formats', preg_match('/<video autoplay muted loop playsinline controls /', $res['body']) === 1 && strpos($res['body'], 'assets/intro.webm?v=') !== false && strpos($res['body'], 'assets/intro.mp4?v=') !== false && strpos($res['body'], 'assets/intro-poster.jpg?v=') !== false && strpos($res['body'], 'hero--solo') === false);
+$clip = http('GET', $home['base'] . '/assets/intro.mp4');
+check('the intro video file is served', $clip['status'] === 200 && strlen($clip['body']) === filesize(dirname(__DIR__) . '/assets/intro.mp4'));
+$res = http('GET', $home['base'] . '/index.php?view=library&type=style');
+check('old catalog links move to market.php', $res['status'] === 301 && header_of($res, 'location') === 'market.php?view=library&type=style');
+check('download.php without a release is a friendly 404', http('GET', $home['base'] . '/download.php')['status'] === 404);
+$info = http('GET', $home['base'] . '/api/info.php');
+check('info publishes the limits, switches and release', $info['status'] === 200 && $info['json']['life_days'] === 10 && $info['json']['limits']['style_mb'] === 40 && $info['json']['uploads']['color'] === true && $info['json']['release'] === null);
+check('info says AI is off until a key is set', $info['json']['ai']['available'] === false);
+check('info can be revalidated', http('GET', $home['base'] . '/api/info.php', array('headers' => array('If-None-Match: ' . header_of($info, 'etag'))))['status'] === 304);
+
+echo "Admin\n";
+$fake = fake_replicate();
+$adminSite = site(array_merge($ready, array('replicate_base_url' => $fake['base'], 'max_storage_mb' => 50, 'max_uploads_per_day' => 20)));
+$ad = $adminSite['base'];
+write_json($adminSite['dir'] . '/storage/users.json', array('users' => array(
+    array('id' => 'u1', 'name' => 'Mike', 'email' => 'mike@example.com', 'google_sub' => 's1', 'created' => iso(-86400)),
+    array('id' => 'u2', 'name' => 'Nok', 'email' => 'nok@example.com', 'google_sub' => 's2', 'created' => iso(-3600)),
+)));
+check('admin needs a signed-in member', http('GET', $ad . '/admin.php')['status'] === 302);
+$boss = signed_in($adminSite, 'u1');
+$guest = signed_in($adminSite, 'u2');
+$res = http('GET', $ad . '/admin.php', array('cookie' => $guest['cookie']));
+check('a member who is not an admin sees only the claim form', $res['status'] === 200 && strpos($res['body'], 'ยืนยันว่าเป็นผู้ดูแล') !== false && strpos($res['body'], 'ตั้งค่า Marketplace') === false);
+http('POST', $ad . '/admin.php', array('cookie' => $guest['cookie'], 'fields' => array('action' => 'save_market', 'csrf' => $guest['csrf'], 'life_days' => '1')));
+check('a member who is not an admin cannot change settings', !is_file($adminSite['dir'] . '/storage/settings.json'));
+http('POST', $ad . '/admin.php', array('cookie' => $guest['cookie'], 'fields' => array('action' => 'claim', 'csrf' => $guest['csrf'], 'token' => 'wrong')));
+check('a wrong token does not make an admin', !isset(read_json($adminSite['dir'] . '/config.json')['admin_ids']));
+http('POST', $ad . '/admin.php', array('cookie' => $boss['cookie'], 'fields' => array('action' => 'claim', 'csrf' => $boss['csrf'], 'token' => 'admin-token-0123456789abcdef')));
+check('the setup token makes the member an admin', read_json($adminSite['dir'] . '/config.json')['admin_ids'] === array('u1'));
+$page = http('GET', $ad . '/admin.php', array('cookie' => $boss['cookie']));
+check('the admin page shows every section', $page['status'] === 200 && strpos($page['body'], 'id="market"') !== false && strpos($page['body'], 'id="ai"') !== false && strpos($page['body'], 'id="release"') !== false && strpos($page['body'], 'mike@example.com') !== false);
+check('admin pages are never cached', strpos(header_of($page, 'cache-control'), 'no-store') !== false);
+check('the header shows Admin only to admins', strpos($page['body'], 'href="admin.php"') !== false && strpos(http('GET', $ad . '/market.php', array('cookie' => $guest['cookie']))['body'], 'href="admin.php"') === false);
+for ($i = 0; $i < 4; $i++) {
+    http('POST', $ad . '/admin.php', array('cookie' => $guest['cookie'], 'fields' => array('action' => 'claim', 'csrf' => $guest['csrf'], 'token' => 'guess' . $i)));
+}
+$res = http('POST', $ad . '/admin.php', array('cookie' => $guest['cookie'], 'fields' => array('action' => 'claim', 'csrf' => $guest['csrf'], 'token' => 'admin-token-0123456789abcdef')));
+check('admin claims are limited to 5 tries per 10 minutes', read_json($adminSite['dir'] . '/config.json')['admin_ids'] === array('u1'));
+
+$res = http('POST', $ad . '/admin.php', array('cookie' => $boss['cookie'], 'fields' => array(
+    'action' => 'save_market', 'csrf' => $boss['csrf'], 'life_days' => '3', 'max_script_mb' => '1', 'max_style_mb' => '1', 'max_preview_mb' => '1',
+    'uploads_per_day' => '5', 'storage_mb' => '50', 'panel_starts_per_10min' => '20', 'release_max_mb' => '5',
+    'allow_script' => '1', 'allow_style' => '1')));
+$settings = read_json($adminSite['dir'] . '/storage/settings.json');
+check('the admin saves Marketplace settings', $res['status'] === 302 && $settings['life_days'] === 3 && $settings['max_style_mb'] === 1 && $settings['allow_color'] === false && $settings['maintenance'] === false);
+$info = http('GET', $ad . '/api/info.php')['json'];
+check('info follows the saved settings', $info['life_days'] === 3 && $info['uploads']['color'] === false && $info['limits']['style_mb'] === 1);
+$memberToken = panel_token($adminSite, 'u2', 'Nok');
+$tmp2 = $adminSite['dir'] . '/uploads';
+@mkdir($tmp2);
+$res = http('POST', $ad . '/api/upload.php', array('fields' => array('panel_token' => $memberToken, 'type' => 'color', 'name' => 'Off', 'colors' => '#000000')));
+check('a kind the admin turned off is refused', $res['status'] === 403 && $res['json']['error'] === 'Uploads of this kind are turned off');
+$res = http('POST', $ad . '/api/upload.php', array('fields' => array('panel_token' => $memberToken, 'type' => 'style', 'name' => 'Big'), 'files' => array('file' => array(file_with($tmp2, 'big.ai', '%PDF' . str_repeat('x', 1100000)), 'style.ai'))));
+check('the admin size limit applies', $res['status'] === 400 && $res['json']['error'] === 'File is empty or too large');
+$res = http('POST', $ad . '/api/upload.php', array('fields' => array('panel_token' => $memberToken, 'type' => 'script', 'name' => 'Short'), 'files' => array('file' => array(file_with($tmp2, 's.jsx', 'app.redraw();'), 'button.jsx'))));
+$short = $res['json']['item'];
+check('new items live as long as the admin set', $res['status'] === 201 && $short['days_left'] === 3);
+http('POST', $ad . '/admin.php', array('cookie' => $boss['cookie'], 'fields' => array(
+    'action' => 'save_market', 'csrf' => $boss['csrf'], 'life_days' => '3', 'max_script_mb' => '1', 'max_style_mb' => '1', 'max_preview_mb' => '1',
+    'uploads_per_day' => '5', 'storage_mb' => '50', 'panel_starts_per_10min' => '20', 'release_max_mb' => '5',
+    'allow_script' => '1', 'allow_color' => '1', 'allow_style' => '1', 'maintenance' => '1')));
+$res = http('POST', $ad . '/api/upload.php', array('fields' => array('panel_token' => $memberToken, 'type' => 'color', 'name' => 'Later', 'colors' => '#000000')));
+check('maintenance stops uploads', $res['status'] === 503);
+check('maintenance stops members deleting from a panel', http('POST', $ad . '/api/delete.php', array('fields' => array('id' => $short['id'], 'panel_token' => $memberToken)))['status'] === 503);
+$page = http('GET', $ad . '/market.php');
+check('maintenance is announced on the Marketplace', strpos($page['body'], 'ปิดปรับปรุงชั่วคราว') !== false);
+check('downloads keep working in maintenance', http('GET', $ad . '/api/download.php?id=' . $short['id'])['status'] === 200);
+http('POST', $ad . '/admin.php', array('cookie' => $boss['cookie'], 'fields' => array(
+    'action' => 'save_market', 'csrf' => $boss['csrf'], 'life_days' => '999', 'max_script_mb' => '-4', 'max_style_mb' => 'abc', 'max_preview_mb' => '1',
+    'uploads_per_day' => '5', 'storage_mb' => '50', 'panel_starts_per_10min' => '20', 'release_max_mb' => '5',
+    'allow_script' => '1', 'allow_color' => '1', 'allow_style' => '1')));
+$settings = read_json($adminSite['dir'] . '/storage/settings.json');
+check('settings are clamped to safe ranges', $settings['life_days'] === 365 && $settings['max_script_mb'] === 1 && $settings['max_style_mb'] === 40 && $settings['maintenance'] === false);
+
+echo "Central AI\n";
+$aiOff = http('POST', $ad . '/api/ai.php', array('fields' => array('action' => 'start', 'panel_token' => $memberToken, 'prompt' => 'make a circle')));
+check('AI without a key says it is not set up', $aiOff['status'] === 503 && $aiOff['json']['error'] === 'AI is not set up');
+http('POST', $ad . '/admin.php', array('cookie' => $boss['cookie'], 'fields' => array(
+    'action' => 'save_ai', 'csrf' => $boss['csrf'], 'ai_enabled' => '1', 'ai_model' => 'google/gemini-3-flash', 'ai_per_member_daily' => '3',
+    'ai_total_daily' => '100', 'ai_max_prompt_kb' => '4', 'replicate_api_token' => 'r8_test_key_0123456789abcdef')));
+check('the admin stores the AI key in config.json', read_json($adminSite['dir'] . '/config.json')['replicate_api_token'] === 'r8_test_key_0123456789abcdef');
+$page = http('GET', $ad . '/admin.php', array('cookie' => $boss['cookie']));
+check('the admin page never shows the key again', strpos($page['body'], 'r8_test_key_0123456789abcdef') === false && strpos($page['body'], 'cdef') !== false);
+check('info says AI is available', http('GET', $ad . '/api/info.php')['json']['ai']['available'] === true);
+$res = http('POST', $ad . '/admin.php', array('cookie' => $boss['cookie'], 'fields' => array('action' => 'test_ai', 'csrf' => $boss['csrf'])));
+$page = http('GET', $ad . '/admin.php', array('cookie' => $boss['cookie']));
+check('the admin tests the key against Replicate', strpos($page['body'], 'API key ใช้ได้ (Replicate: tester)') !== false);
+check('AI needs a connected panel', http('POST', $ad . '/api/ai.php', array('fields' => array('action' => 'start', 'prompt' => 'x')))['status'] === 401);
+$res = http('POST', $ad . '/api/ai.php', array('fields' => array('action' => 'start', 'panel_token' => $memberToken, 'prompt' => 'make a circle')));
+check('a connected panel gets the answer', $res['status'] === 200 && $res['json']['status'] === 'succeeded' && strpos($res['json']['output'], '"code"') !== false && $res['json']['remaining'] === 2);
+$sent = fake_requests($fake);
+$last = end($sent);
+check('the server asks Replicate with its key and fixed instructions', $last['auth'] === 'Bearer r8_test_key_0123456789abcdef' && $last['path'] === '/v1/models/google/gemini-3-flash/predictions' && strpos($last['body']['input']['system_instruction'], 'Illustrator JSX expert') !== false && $last['body']['input']['prompt'] === 'make a circle' && $last['body']['input']['max_output_tokens'] === 2048);
+$res = http('POST', $ad . '/api/ai.php', array('fields' => array('action' => 'start', 'panel_token' => $memberToken, 'prompt' => 'a slow one')));
+check('a long request comes back to be polled', $res['status'] === 200 && $res['json']['status'] === 'processing' && $res['json']['id'] === 'slowpred0001');
+$bossToken = panel_token($adminSite, 'u1', 'Mike');
+check('another member cannot poll it', http('POST', $ad . '/api/ai.php', array('fields' => array('action' => 'poll', 'panel_token' => $bossToken, 'id' => 'slowpred0001')))['status'] === 404);
+$res = http('POST', $ad . '/api/ai.php', array('fields' => array('action' => 'poll', 'panel_token' => $memberToken, 'id' => 'slowpred0001')));
+check('the owner polls it to the answer', $res['status'] === 200 && $res['json']['status'] === 'succeeded');
+$res = http('POST', $ad . '/api/ai.php', array('fields' => array('action' => 'start', 'panel_token' => $memberToken, 'prompt' => 'out of credit')));
+check('Replicate errors are explained without leaking the key', $res['status'] === 503 && $res['json']['error'] === 'AI credit has run out' && strpos($res['body'], 'r8_') === false);
+$res = http('POST', $ad . '/api/ai.php', array('fields' => array('action' => 'start', 'panel_token' => $memberToken, 'prompt' => 'third')));
+check('a failed request is not counted against the quota', $res['status'] === 200 && $res['json']['remaining'] === 0);
+$res = http('POST', $ad . '/api/ai.php', array('fields' => array('action' => 'start', 'panel_token' => $memberToken, 'prompt' => 'fourth')));
+check('each member has a daily AI quota', $res['status'] === 429 && $res['json']['error'] === 'Daily AI limit reached: 3 requests');
+check('prompts have a size limit', http('POST', $ad . '/api/ai.php', array('fields' => array('action' => 'start', 'panel_token' => $bossToken, 'prompt' => str_repeat('x', 5000))))['status'] === 413);
+http('POST', $ad . '/admin.php', array('cookie' => $boss['cookie'], 'fields' => array(
+    'action' => 'save_ai', 'csrf' => $boss['csrf'], 'ai_model' => 'google/gemini-3-flash', 'ai_per_member_daily' => '3', 'ai_total_daily' => '100', 'ai_max_prompt_kb' => '4')));
+check('the admin can switch AI off', http('POST', $ad . '/api/ai.php', array('fields' => array('action' => 'start', 'panel_token' => $bossToken, 'prompt' => 'x')))['json']['error'] === 'AI is turned off');
+check('AI answers only POST', http('GET', $ad . '/api/ai.php')['status'] === 405);
+
+echo "Release\n";
+$zips = $adminSite['dir'] . '/zips';
+@mkdir($zips);
+$upload = function ($file, $notes) use ($ad, $boss) {
+    http('POST', $ad . '/admin.php', array('cookie' => $boss['cookie'], 'fields' => array('action' => 'upload_release', 'csrf' => $boss['csrf'], 'notes' => $notes), 'files' => array('zxp' => array($file, basename($file)))));
+    return http('GET', $ad . '/admin.php', array('cookie' => $boss['cookie']))['body'];
+};
+$body = $upload(make_zxp($zips . '/unsigned.zxp', 'com.tata.pro', '3.3.0', false), '');
+check('an unsigned .zxp is refused', strpos($body, 'ไฟล์ยังไม่ได้เซ็น') !== false && !is_file($adminSite['dir'] . '/storage/release.json'));
+$body = $upload(make_zxp($zips . '/other.zxp', 'com.other.panel', '1.0.0', true), '');
+check('another extension is refused', strpos($body, 'ไม่ใช่ Rocket Launcher') !== false);
+$body = $upload(file_with($zips, 'fake.zxp', 'not a zip'), '');
+check('a file that is not a ZXP is refused', strpos($body, 'เปิดไฟล์ .zxp ไม่ได้') !== false);
+$good = make_zxp($zips . '/RocketLauncher.zxp', 'com.tata.pro', '3.3.0', true);
+$body = $upload($good, 'AI ไม่ต้องใช้ key แล้ว');
+$release = read_json($adminSite['dir'] . '/storage/release.json');
+check('a signed Rocket Launcher .zxp becomes the download', $release['version'] === '3.3.0' && $release['sha256'] === hash_file('sha256', $good) && strpos($body, 'อัปโหลด v3.3.0 แล้ว') !== false);
+check('the version comes from the manifest', http('GET', $ad . '/api/info.php')['json']['release']['version'] === '3.3.0');
+$homePage = http('GET', $ad . '/');
+check('the homepage offers the download with its version', strpos($homePage['body'], 'href="download.php"') !== false && strpos($homePage['body'], 'v3.3.0') !== false && strpos($homePage['body'], 'AI ไม่ต้องใช้ key แล้ว') !== false);
+$res = http('GET', $ad . '/download.php');
+check('download.php sends the .zxp with its versioned name', $res['status'] === 200 && $res['body'] === file_get_contents($good) && strpos(header_of($res, 'content-disposition'), 'RocketLauncher-v3.3.0.zxp') !== false);
+http('GET', $ad . '/download.php');
+check('panel downloads count once per visitor per day', read_json($adminSite['dir'] . '/storage/release.json')['downloads'] === 1);
+$previous = $adminSite['dir'] . '/storage/' . $release['stored'];
+$upload(make_zxp($zips . '/next.zxp', 'com.tata.pro', '3.3.1', true), '');
+check('a new upload replaces the old file', read_json($adminSite['dir'] . '/storage/release.json')['version'] === '3.3.1' && !is_file($previous));
+
+echo "Admin housekeeping\n";
+http('POST', $ad . '/admin.php', array('cookie' => $boss['cookie'], 'fields' => array('action' => 'delete_item', 'csrf' => $boss['csrf'], 'id' => $short['id'])));
+check('the admin deletes any item', http('GET', $ad . '/api/download.php?id=' . $short['id'])['status'] === 404);
+http('POST', $ad . '/admin.php', array('cookie' => $boss['cookie'], 'fields' => array('action' => 'disconnect_member', 'csrf' => $boss['csrf'], 'member' => 'u2')));
+check('the admin disconnects a member\'s panels', http('POST', $ad . '/api/panel.php', array('fields' => array('action' => 'profile', 'panel_token' => $memberToken)))['status'] === 401);
+http('POST', $ad . '/admin.php', array('cookie' => $boss['cookie'], 'fields' => array('action' => 'remove_admin', 'csrf' => $boss['csrf'], 'member' => 'u1')));
+check('the last admin cannot be removed', read_json($adminSite['dir'] . '/config.json')['admin_ids'] === array('u1'));
+$log = read_json($adminSite['dir'] . '/storage/admin-log.json')['entries'];
+$actions = array_map(function ($e) { return $e['action']; }, $log);
+check('admin actions are logged', in_array('became admin', $actions, true) && in_array('marketplace settings', $actions, true) && in_array('panel release', $actions, true) && in_array('delete item', $actions, true));
+check('the log never records the AI key', strpos((string) file_get_contents($adminSite['dir'] . '/storage/admin-log.json'), 'r8_test') === false);
+
 echo "Web server rules\n";
 $root = file_get_contents(dirname(__DIR__) . '/.htaccess');
 $storage = file_get_contents(dirname(__DIR__) . '/storage/.htaccess');
 check('config, backups and helpers are denied', strpos($root, '<Files "config.json">') !== false && strpos($root, '\.(bak|tmp)$') !== false && strpos($root, 'lib\.php') !== false);
-check('dot folders and the tests are denied', strpos($root, '"(^|/)\.(?!well-known/)"') !== false && strpos($root, '"^tests(/|$)"') !== false && trim(file_get_contents(__DIR__ . '/.htaccess')) === 'Require all denied');
-check('storage never serves data files or scripts', strpos($storage, 'php|phtml|phar|json|lock|bak|tmp') !== false);
+check('dot folders, tests and includes are denied', strpos($root, '"(^|/)\.(?!well-known/)"') !== false && strpos($root, '"^tests(/|$)"') !== false && strpos($root, '"^inc(/|$)"') !== false && trim(file_get_contents(__DIR__ . '/.htaccess')) === 'Require all denied' && trim(file_get_contents(dirname(__DIR__) . '/inc/.htaccess')) === 'Require all denied');
+check('storage never serves data files, scripts or stored installers', strpos($storage, 'php|phtml|phar|json|lock|bak|tmp|zxp') !== false);
 
 $total = $GLOBALS['passed'] + count($GLOBALS['failed']);
 echo "\n" . $GLOBALS['passed'] . " of $total checks passed\n";
