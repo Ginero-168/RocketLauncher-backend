@@ -29,10 +29,18 @@ if (!isset($types[$ext])) {
     rl_json(array('ok' => false, 'error' => 'Preview is missing'), 404);
 }
 
+// A preview belongs to one item id and is never replaced: browsers and the
+// panel keep it for 30 days, the CDN for one (so a deleted item's preview
+// does not linger there); a revalidation gets an empty 304.
+$etag = '"' . $id . '-' . filesize($realFile) . '"';
 rl_send_cors();
+header('Cache-Control: public, max-age=2592000, s-maxage=86400, immutable');
+header('ETag: ' . $etag);
+if (rl_etag_matches($etag)) {
+    http_response_code(304);
+    exit;
+}
 header('Content-Type: ' . $types[$ext]);
 header('Content-Length: ' . filesize($realFile));
-header('X-Content-Type-Options: nosniff');
-header('Cache-Control: public, max-age=86400');
 readfile($realFile);
 exit;

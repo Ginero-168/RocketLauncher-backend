@@ -1,8 +1,14 @@
 config.json
+config.json.bak
+config.json.tmp
 storage/catalog.json
 storage/users.json
 storage/stars.json
 storage/panel.json
 storage/write.lock
+storage/limits.json
+storage/housekeeping.lock
+storage/*.bak
+storage/*.tmp
 storage/files/*
 !storage/files/.gitkeep

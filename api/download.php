@@ -22,7 +22,7 @@ if ($item === null || rl_expiry_time($item) <= time()) {
 }
 
 if (rl_normalize_type($item['type']) === 'color') {
-    $renewed = rl_renew_item($id);
+    $renewed = rl_renew_item($id, rl_visitor_key());
     if (is_array($renewed)) {
         $item = $renewed;
     }
@@ -40,7 +40,7 @@ if ($realStorage === false || $realFile === false || strpos($realFile, $realStor
     rl_json(array('ok' => false, 'error' => 'File is missing'), 404);
 }
 
-$renewed = rl_renew_item($id);
+$renewed = rl_renew_item($id, rl_visitor_key());
 if (is_array($renewed)) {
     $item = $renewed;
 }
@@ -49,7 +49,7 @@ $filename = isset($item['filename']) ? $item['filename'] : basename($realFile);
 rl_send_cors();
 header('Content-Type: application/octet-stream');
 header('Content-Length: ' . filesize($realFile));
-header('Content-Disposition: attachment; filename="' . str_replace('"', '', $filename) . '"');
+header(rl_attachment_header($filename));
 header('X-Content-Type-Options: nosniff');
 readfile($realFile);
 exit;
