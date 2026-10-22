@@ -13,8 +13,9 @@ if (!rl_google_ready()) {
         exit;
     }
     rl_page_headers();
-    echo '<!doctype html><html lang="th"><head><meta charset="utf-8"><title>Login</title><link rel="stylesheet" href="../assets/site.css"></head>';
-    echo '<body><main class="wrap"><p class="kicker">Rocket Launcher</p><h1>ยังไม่ได้ตั้งค่า Google login</h1></main></body></html>';
+    rl_layout_start('Login · Rocket Launcher', array('base' => '../', 'active' => 'account', 'user' => null));
+    echo '<section class="panel-card narrow"><p class="kicker">Login</p><h1>ยังไม่ได้ตั้งค่า Google login</h1></section>';
+    rl_layout_end('../');
     exit;
 }
 

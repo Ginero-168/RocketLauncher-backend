@@ -8,10 +8,10 @@ rl_page_headers();
 function rl_setup_notice($status, $title, $message)
 {
     http_response_code($status);
-    echo '<!doctype html><html lang="th"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">';
-    echo '<title>Setup Marketplace</title><link rel="stylesheet" href="assets/site.css"><link rel="icon" href="assets/icon.svg" type="image/svg+xml"></head><body><main class="wrap">';
-    echo '<p class="kicker">Rocket Launcher</p><h1>' . htmlspecialchars($title, ENT_QUOTES, 'UTF-8') . '</h1>';
-    echo '<p class="lead">' . $message . '</p><p><a href="index.php">ไปหน้ารายการ</a></p></main></body></html>';
+    rl_layout_start('Setup · Rocket Launcher', array('active' => 'setup', 'user' => null));
+    echo '<section class="panel-card narrow"><p class="kicker">Setup</p><h1>' . rl_h($title) . '</h1>';
+    echo '<p class="lead">' . $message . '</p><p><a class="btn" href="index.php">ไปหน้าแรก</a></p></section>';
+    rl_layout_end('');
     exit;
 }
 
@@ -97,46 +97,36 @@ function h($value)
     return htmlspecialchars((string) $value, ENT_QUOTES, 'UTF-8');
 }
 
+rl_layout_start('Setup · Rocket Launcher', array('active' => 'setup', 'user' => null));
 ?>
-<!doctype html>
-<html lang="th">
-<head>
-    <meta charset="utf-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1">
-    <title>Setup Marketplace</title>
-    <link rel="stylesheet" href="assets/site.css"><link rel="icon" href="assets/icon.svg" type="image/svg+xml">
-</head>
-<body>
-    <main class="wrap">
-        <p class="kicker">Rocket Launcher</p>
-        <h1>ตั้งค่า Marketplace</h1>
-        <?php if ($message !== '') { ?>
-            <p class="note"><?php echo h($message); ?></p>
-        <?php } ?>
-        <?php if ($token !== '') { ?>
-            <p class="token"><?php echo h($token); ?></p>
-        <?php } ?>
-        <?php if (rl_config() === null) { ?>
-            <form method="post" class="stack">
-                <label>
-                    โทเคนสำหรับอัปโหลด
-                    <input name="upload_token" type="text" placeholder="เว้นว่างไว้เพื่อสุ่มให้">
-                </label>
-                <button class="primary" type="submit">สร้าง config.json</button>
-            </form>
-        <?php } else { ?>
-            <p>Marketplace พร้อมแล้ว ใส่ Google client ด้านล่าง แล้วค่อยลบ <code>setup.php</code></p>
-            <p>Redirect URI ที่ต้องใส่ใน Google Cloud</p>
-            <p class="token"><?php echo h(rl_google_redirect_uri()); ?></p>
-            <form method="post" class="stack">
-                <label>โทเคนเดิม เพื่อยืนยันว่าเป็นคนตั้งค่า<input name="upload_token" type="password" required></label>
-                <label>ที่อยู่เว็บ<input name="base_url" type="url" placeholder="https://market.example.com" value="<?php echo h($baseValue); ?>" required></label>
-                <label>Google client id<input name="google_client_id" type="text" required value="<?php echo h($savedClient); ?>"></label>
-                <label>Google client secret<input name="google_client_secret" type="password" placeholder="เว้นว่างถ้าไม่เปลี่ยน"></label>
-                <button class="primary" type="submit">บันทึก Google login</button>
-            </form>
-            <p><a href="index.php">ไปหน้ารายการ</a></p>
-        <?php } ?>
-    </main>
-</body>
-</html>
+<section class="panel-card narrow">
+    <p class="kicker">Setup</p>
+    <h1>ตั้งค่า Marketplace</h1>
+    <?php if ($message !== '') { ?>
+        <p class="note" role="status"><?php echo h($message); ?></p>
+    <?php } ?>
+    <?php if ($token !== '') { ?>
+        <p class="token"><?php echo h($token); ?></p>
+    <?php } ?>
+    <?php if (rl_config() === null) { ?>
+        <form method="post" class="form-stack">
+            <label class="field-label">โทเคนแอดมิน
+                <input class="field" name="upload_token" type="text" placeholder="เว้นว่างไว้เพื่อสุ่มให้">
+            </label>
+            <button class="btn btn--primary" type="submit">สร้าง config.json</button>
+        </form>
+    <?php } else { ?>
+        <p class="lead">Marketplace พร้อมแล้ว ใส่ Google client ด้านล่าง แล้วค่อยลบ <code>setup.php</code></p>
+        <p class="field-help">Redirect URI ที่ต้องใส่ใน Google Cloud</p>
+        <p class="token"><?php echo h(rl_google_redirect_uri()); ?></p>
+        <form method="post" class="form-stack">
+            <label class="field-label">โทเคนเดิม เพื่อยืนยันว่าเป็นคนตั้งค่า<input class="field" name="upload_token" type="password" required></label>
+            <label class="field-label">ที่อยู่เว็บ<input class="field" name="base_url" type="url" placeholder="https://market.example.com" value="<?php echo h($baseValue); ?>" required></label>
+            <label class="field-label">Google client id<input class="field" name="google_client_id" type="text" required value="<?php echo h($savedClient); ?>"></label>
+            <label class="field-label">Google client secret<input class="field" name="google_client_secret" type="password" placeholder="เว้นว่างถ้าไม่เปลี่ยน"></label>
+            <button class="btn btn--primary" type="submit">บันทึก Google login</button>
+        </form>
+    <?php } ?>
+</section>
+<?php
+rl_layout_end('');

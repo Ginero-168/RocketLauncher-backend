@@ -5,252 +5,111 @@ require __DIR__ . '/lib.php';
 
 rl_page_headers();
 
-function h($value)
-{
-    return htmlspecialchars((string) $value, ENT_QUOTES, 'UTF-8');
-}
-
-function rl_page_next($view, $type)
-{
+// Bookmarks of the catalog when it lived here.
+if (isset($_GET['view']) || isset($_GET['type'])) {
     $query = array();
-    if ($view === 'library') {
-        $query['view'] = 'library';
-    }
-    if ($type !== '') {
-        $query['type'] = $type;
-    }
-    $text = http_build_query($query);
-    return rl_safe_next('index.php' . ($text !== '' ? '?' . $text : ''));
-}
-
-function rl_type_label($type)
-{
-    if ($type === 'script') {
-        return 'Script';
-    }
-    if ($type === 'color') {
-        return 'Color';
-    }
-    return 'Graphic Style';
-}
-
-function rl_size_label($bytes)
-{
-    $bytes = (int) $bytes;
-    if ($bytes < 1024) {
-        return $bytes . ' B';
-    }
-    if ($bytes < 1024 * 1024) {
-        return round($bytes / 1024, 1) . ' KB';
-    }
-    return round($bytes / (1024 * 1024), 1) . ' MB';
-}
-
-if ($_SERVER['REQUEST_METHOD'] === 'POST') {
-    $next = rl_safe_next(isset($_POST['next']) ? $_POST['next'] : 'index.php');
-    if (!rl_csrf_ok()) {
-        rl_flash('คำขอหมดอายุ ลองใหม่อีกครั้ง');
-        header('Location: ' . $next);
-        exit;
-    }
-    $actor = rl_current_user();
-    if (!$actor) {
-        rl_flash('เข้าสู่ระบบก่อน');
-        header('Location: auth/login.php?next=' . rawurlencode($next));
-        exit;
-    }
-    $action = isset($_POST['action']) ? (string) $_POST['action'] : '';
-    $id = isset($_POST['id']) ? (string) $_POST['id'] : '';
-    if ($action === 'star') {
-        if (rl_find_item($id) === null) {
-            rl_flash('ไม่พบรายการ');
-        } else {
-            $on = rl_toggle_star($actor['id'], $id);
-            if ($on === null) {
-                rl_flash('บันทึก Star ไม่ได้');
-            } else {
-                rl_flash($on ? 'เก็บเข้า Library แล้ว' : 'เอาออกจาก Library แล้ว');
-            }
+    foreach (array('view', 'type') as $key) {
+        if (isset($_GET[$key]) && is_string($_GET[$key]) && preg_match('/^[a-z]{1,10}$/', $_GET[$key])) {
+            $query[$key] = $_GET[$key];
         }
-    } elseif ($action === 'delete') {
-        $result = rl_delete_item($id, $actor, false);
-        if (!empty($result['ok'])) {
-            rl_flash('ลบรายการแล้ว');
-        } elseif (isset($result['status']) && (int) $result['status'] === 403) {
-            rl_flash('ลบได้เฉพาะรายการของคุณ');
-        } else {
-            rl_flash('ลบไม่สำเร็จ');
-        }
-    } elseif ($action === 'disconnect') {
-        rl_flash(rl_panel_revoke_user($actor['id']) ? 'ตัดการเชื่อมต่อพาเนลทั้งหมดแล้ว' : 'ตัดการเชื่อมต่อไม่สำเร็จ');
     }
-    header('Location: ' . $next);
+    header('Location: market.php' . ($query ? '?' . http_build_query($query) : ''), true, 301);
     exit;
 }
 
 $ready = rl_config() !== null;
-if ($ready) {
-    rl_housekeeping();
-}
-$view = (isset($_GET['view']) && $_GET['view'] === 'library') ? 'library' : 'all';
-$type = rl_normalize_type(isset($_GET['type']) ? (string) $_GET['type'] : '');
 $user = rl_current_user();
-$next = rl_page_next($view, $type);
-$flash = rl_flash();
-
-if ($view === 'library' && !$user) {
-    header('Location: auth/login.php?next=' . rawurlencode($next));
-    exit;
-}
-
-$items = $ready ? rl_present_catalog($type, $user ? $user['id'] : '', $view === 'library') : array();
-// Visitors who are not signed in get no session and no token.
 $csrf = $user ? rl_csrf_token() : '';
-$panels = $user ? rl_panel_count($user['id']) : 0;
+$settings = rl_settings();
+$release = $ready ? rl_release() : null;
+$itemCount = $ready ? count(rl_present_catalog('', '', false)) : 0;
+$video = is_file(__DIR__ . '/assets/intro.mp4');
 
-$filters = array(
-    '' => 'ทั้งหมด',
-    'script' => 'Script',
-    'color' => 'Color',
-    'style' => 'Graphic Style',
+$features = array(
+    array('TOOL', 'ปุ่มสคริปต์คลิกเดียว', 'ใส่สคริปต์ .jsx เป็นปุ่มสีของตัวเอง กดครั้งเดียวก็รัน และปักหมุดตัวที่ใช้บ่อยไว้แถบบนสุด'),
+    array('EDIT', 'แก้สคริปต์ในพาเนล', 'เขียนหรือปรับสคริปต์ในตัวแก้โค้ด แล้วบันทึกเป็นปุ่มได้ทันที'),
+    array('STYLE', 'Graphic Style คลิกเดียว', 'เก็บสไตล์ไว้ใช้ซ้ำ ครั้งต่อไปใส่ได้ทันทีโดยไม่ต้องเปิดไฟล์'),
+    array('COLOR', 'ชุดสีและคอนทราสต์', 'วงล้อสีกับ Harmony วางพาเลตต์ลงเอกสารหรือ Swatches และตรวจค่าคอนทราสต์ WCAG'),
+    array('KEEP', 'คลังชิ้นงาน', 'เก็บชิ้นงานที่เลือกไว้ แล้ววางกลับกลางอาร์ตบอร์ดในคลิกเดียว คลิปบอร์ดไม่ถูกแตะ'),
+    array('AI', 'AI เขียนสคริปต์', 'บอกสิ่งที่ต้องการ แล้ว AI จะเขียนสคริปต์ให้ ใช้ AI กลางของเว็บ ไม่ต้องหา API key เอง'),
+    array('MARKET', 'Marketplace', 'แชร์และดาวน์โหลด Script ชุดสี และ Graphic Style ของผู้ใช้คนอื่นเข้าพาเนลโดยตรง'),
 );
 
+rl_layout_start('Rocket Launcher · พาเนลสำหรับ Adobe Illustrator', array(
+    'active' => 'home',
+    'user' => $user,
+    'csrf' => $csrf,
+    'next' => 'index.php',
+));
 ?>
-<!doctype html>
-<html lang="th">
-<head>
-    <meta charset="utf-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1">
-    <title>Rocket Launcher Marketplace</title>
-    <link rel="stylesheet" href="assets/site.css">
-    <link rel="icon" href="assets/icon.svg" type="image/svg+xml">
-</head>
-<body>
-    <main class="wrap">
-        <header class="top">
-            <div>
-                <p class="kicker">Rocket Launcher</p>
-                <h1>Marketplace</h1>
-            </div>
-            <nav class="nav">
-                <?php if ($user) { ?>
-                    <a class="<?php echo $view === 'library' ? 'is-on' : ''; ?>" href="index.php?view=library">Library</a>
-                    <?php if (!empty($user['picture'])) { ?>
-                        <img class="avatar" src="<?php echo h($user['picture']); ?>" alt="">
-                    <?php } ?>
-                    <span class="who"><?php echo h($user['name']); ?></span>
-                    <form class="logout" method="post" action="auth/logout.php">
-                        <input type="hidden" name="csrf" value="<?php echo h($csrf); ?>">
-                        <button type="submit">ออกจากระบบ</button>
-                    </form>
-                <?php } else { ?>
-                    <a class="login" href="auth/login.php?next=<?php echo h(rawurlencode($next)); ?>">เข้าสู่ระบบด้วย Google</a>
-                <?php } ?>
-            </nav>
-        </header>
+<section class="hero<?php echo $video ? '' : ' hero--solo'; ?>">
+    <div class="hero-copy">
+        <p class="kicker">Adobe Illustrator panel</p>
+        <h1>งานซ้ำ ๆ ใน Illustrator<br>จบในพาเนลเดียว</h1>
+        <p class="lead">รวมสคริปต์เป็นปุ่มคลิกเดียว ใส่ Graphic Style ในคลิกเดียว จัดชุดสี เก็บชิ้นงานไว้วางซ้ำ และให้ AI เขียนสคริปต์ให้ โดยไม่ต้องมี API key ของตัวเอง</p>
+        <div class="hero-actions">
+            <?php if ($release) { ?>
+                <a class="btn btn--primary btn--lg" href="download.php">
+                    <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 20h14v-2H5v2zM19 9h-4V3H9v6H5l7 7 7-7z"/></svg>
+                    <span>ดาวน์โหลด .zxp</span>
+                </a>
+            <?php } else { ?>
+                <span class="btn btn--lg is-disabled" aria-disabled="true">ไฟล์ติดตั้งกำลังจะมา</span>
+            <?php } ?>
+            <a class="btn btn--lg" href="market.php">เปิด Marketplace</a>
+        </div>
+        <p class="hero-meta">
+            <?php if ($release) { ?>
+                <span>v<?php echo rl_h($release['version']); ?></span>
+                <span><?php echo rl_h(rl_size_text($release['bytes'])); ?></span>
+                <span>อัปเดต <?php echo rl_h(rl_date_text($release['uploaded'])); ?></span>
+            <?php } ?>
+            <span>Illustrator 2021 ขึ้นไป · macOS และ Windows</span>
+        </p>
+    </div>
+    <?php if ($video) { ?>
+        <figure class="hero-video">
+            <video autoplay muted loop playsinline controls preload="metadata" width="1920" height="1080" poster="<?php echo rl_h(rl_asset('', 'assets/intro-poster.jpg')); ?>" aria-label="วิดีโอแนะนำพาเนล Rocket Launcher (ไม่มีเสียง)">
+                <source src="<?php echo rl_h(rl_asset('', 'assets/intro.webm')); ?>" type="video/webm">
+                <source src="<?php echo rl_h(rl_asset('', 'assets/intro.mp4')); ?>" type="video/mp4">
+            </video>
+        </figure>
+    <?php } ?>
+</section>
 
-        <p class="lead">เลือก Script, Color และ Graphic Style แล้วกด Star เพื่อเก็บเข้า Library ของตัวเอง รายการอยู่ได้ 10 วัน และต่ออายุทุกครั้งที่มีคนดาวน์โหลด</p>
+<?php if ($release && !empty($release['notes'])) { ?>
+    <p class="note release-note"><span class="kicker">มีอะไรใหม่ใน v<?php echo rl_h($release['version']); ?></span> <?php echo rl_h($release['notes']); ?></p>
+<?php } ?>
 
-        <?php if ($user) { ?>
-            <div class="account">
-                <span>พาเนลที่เชื่อมกับบัญชีนี้ <?php echo (int) $panels; ?> เครื่อง</span>
-                <?php if ($panels > 0) { ?>
-                    <form method="post" action="index.php">
-                        <input type="hidden" name="csrf" value="<?php echo h($csrf); ?>">
-                        <input type="hidden" name="action" value="disconnect">
-                        <input type="hidden" name="next" value="<?php echo h($next); ?>">
-                        <button class="danger" type="submit">ตัดการเชื่อมต่อทั้งหมด</button>
-                    </form>
-                <?php } ?>
-            </div>
+<section class="features" aria-labelledby="features-title">
+    <h2 id="features-title" class="section-title">ในพาเนลมีอะไรบ้าง</h2>
+    <div class="feature-grid">
+        <?php foreach ($features as $feature) { ?>
+            <article class="feature">
+                <p class="feature-tag"><?php echo rl_h($feature[0]); ?></p>
+                <h3><?php echo rl_h($feature[1]); ?></h3>
+                <p><?php echo rl_h($feature[2]); ?></p>
+            </article>
         <?php } ?>
+    </div>
+</section>
 
-        <?php if ($flash !== '') { ?>
-            <p class="note"><?php echo h($flash); ?></p>
-        <?php } ?>
-        <?php if (!$ready) { ?>
-            <p class="note">ยังไม่ได้ตั้งค่า <a href="setup.php">เปิดหน้า setup</a></p>
-        <?php } else { ?>
-            <nav class="filters">
-                <?php foreach ($filters as $key => $label) { ?>
-                    <?php
-                    $href = 'index.php';
-                    $query = array();
-                    if ($view === 'library') {
-                        $query['view'] = 'library';
-                    }
-                    if ($key !== '') {
-                        $query['type'] = $key;
-                    }
-                    if ($query) {
-                        $href .= '?' . http_build_query($query);
-                    }
-                    $on = $type === $key;
-                    ?>
-                    <a class="<?php echo $on ? 'is-on' : ''; ?>" href="<?php echo h($href); ?>"><?php echo h($label); ?></a>
-                <?php } ?>
-            </nav>
+<section class="install" aria-labelledby="install-title">
+    <h2 id="install-title" class="section-title">ติดตั้งใน 3 ขั้น</h2>
+    <ol class="steps">
+        <li><strong>ดาวน์โหลดไฟล์ .zxp</strong><span>ใช้ปุ่มด้านบน ไฟล์เซ็นแล้ว</span></li>
+        <li><strong>ติดตั้งด้วยโปรแกรมติดตั้ง ZXP</strong><span>เช่น ZXP Installer หรือ Anastasiy's Extension Manager แล้วเปิด Illustrator ใหม่</span></li>
+        <li><strong>เปิดพาเนล</strong><span>เมนู Window › Extensions › Rocket Launcher ถ้าจะใช้ AI หรืออัปโหลด ให้กดเชื่อมต่อด้วย Google ในพาเนล</span></li>
+    </ol>
+</section>
 
-            <section class="catalog">
-                <?php if (count($items) === 0) { ?>
-                    <p class="empty"><?php echo $view === 'library' ? 'ยังไม่มีรายการที่ Star' : 'ยังไม่มีรายการ'; ?></p>
-                <?php } ?>
-                <?php foreach ($items as $item) { ?>
-                    <article class="card">
-                        <p class="type"><?php echo h(rl_type_label($item['type'])); ?></p>
-                        <?php if ($item['type'] === 'style' && $item['preview']) { ?>
-                            <img class="preview" src="api/preview.php?id=<?php echo h($item['id']); ?>" alt="<?php echo h($item['name']); ?>" width="240" height="92" loading="lazy" decoding="async">
-                        <?php } ?>
-                        <?php if ($item['type'] === 'color' && count($item['colors']) > 0) { ?>
-                            <div class="swatches">
-                                <?php foreach ($item['colors'] as $color) { ?>
-                                    <span style="background: <?php echo h($color); ?>" title="<?php echo h($color); ?>"></span>
-                                <?php } ?>
-                            </div>
-                        <?php } ?>
-                        <h2><?php echo h($item['name']); ?></h2>
-                        <?php if ($item['description'] !== '') { ?>
-                            <p><?php echo h($item['description']); ?></p>
-                        <?php } ?>
-                        <p class="meta">
-                            <?php if ($item['owner_name'] !== '') { ?>โดย <?php echo h($item['owner_name']); ?> · <?php } ?>
-                            <?php echo (int) $item['stars']; ?> Star
-                            · โหลด <?php echo (int) $item['downloads']; ?>
-                            <?php if ($item['bytes'] > 0) { ?> · <?php echo h(rl_size_label($item['bytes'])); ?><?php } ?>
-                            <?php if ($item['days_left'] > 0) { ?> · เหลือ <?php echo (int) $item['days_left']; ?> วัน<?php } ?>
-                        </p>
-                        <div class="actions">
-                            <?php if ($user) { ?>
-                                <form method="post" action="index.php">
-                                    <input type="hidden" name="csrf" value="<?php echo h($csrf); ?>">
-                                    <input type="hidden" name="action" value="star">
-                                    <input type="hidden" name="id" value="<?php echo h($item['id']); ?>">
-                                    <input type="hidden" name="next" value="<?php echo h($next); ?>">
-                                    <button class="star<?php echo $item['starred'] ? ' is-on' : ''; ?>" type="submit"><?php echo $item['starred'] ? 'Starred' : 'Star'; ?></button>
-                                </form>
-                            <?php } else { ?>
-                                <a class="star" href="auth/login.php?next=<?php echo h(rawurlencode($next)); ?>">Star</a>
-                            <?php } ?>
-                            <?php if ($item['type'] !== 'color') { ?>
-                                <a class="download" href="api/download.php?id=<?php echo h($item['id']); ?>">ดาวน์โหลด</a>
-                            <?php } ?>
-                            <?php if ($user && $item['mine']) { ?>
-                                <details class="remove">
-                                    <summary>ลบ</summary>
-                                    <form method="post" action="index.php">
-                                        <input type="hidden" name="csrf" value="<?php echo h($csrf); ?>">
-                                        <input type="hidden" name="action" value="delete">
-                                        <input type="hidden" name="id" value="<?php echo h($item['id']); ?>">
-                                        <input type="hidden" name="next" value="<?php echo h($next); ?>">
-                                        <button class="danger" type="submit">ยืนยันลบ</button>
-                                    </form>
-                                </details>
-                            <?php } ?>
-                        </div>
-                    </article>
-                <?php } ?>
-            </section>
-        <?php } ?>
-    </main>
-</body>
-</html>
+<section class="market-teaser">
+    <div>
+        <p class="kicker">Marketplace</p>
+        <h2 class="section-title">ตอนนี้มี <?php echo (int) $itemCount; ?> รายการให้ดาวน์โหลด</h2>
+        <p class="lead">Script ชุดสี และ Graphic Style จากผู้ใช้ แต่ละรายการอยู่ <?php echo (int) $settings['life_days']; ?> วันและต่ออายุทุกครั้งที่มีคนโหลด</p>
+    </div>
+    <a class="btn btn--lg" href="market.php">ดูทั้งหมด</a>
+</section>
+<?php
+rl_layout_end('');

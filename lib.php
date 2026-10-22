@@ -408,7 +408,7 @@ function rl_csrf_ok()
 function rl_safe_next($value)
 {
     $value = (string) $value;
-    if (preg_match('/^index\.php(\?[A-Za-z0-9_\-=&%\.\+]*)?$/', $value)) {
+    if (preg_match('/^(index|market|admin)\.php(\?[A-Za-z0-9_\-=&%\.\+]*)?$/', $value)) {
         return $value;
     }
     if (preg_match('/^auth\/panel\.php\?code=[A-Z2-9]{4}-[A-Z2-9]{4}$/', $value)) {
@@ -496,9 +496,23 @@ function rl_locked($callback)
     return $result;
 }
 
+// The visitor's address. Behind a CDN that does not hand PHP the real
+// address, the admin can switch on trust_forwarded_for: the last address in
+// X-Forwarded-For is the one the CDN itself saw (earlier ones can be forged).
 function rl_client_ip()
 {
-    return isset($_SERVER['REMOTE_ADDR']) ? (string) $_SERVER['REMOTE_ADDR'] : '';
+    $ip = isset($_SERVER['REMOTE_ADDR']) ? (string) $_SERVER['REMOTE_ADDR'] : '';
+    if (!empty($_SERVER['HTTP_X_FORWARDED_FOR']) && function_exists('rl_settings')) {
+        $settings = rl_settings();
+        if (!empty($settings['trust_forwarded_for'])) {
+            $parts = array_map('trim', explode(',', (string) $_SERVER['HTTP_X_FORWARDED_FOR']));
+            $last = end($parts);
+            if (is_string($last) && filter_var($last, FILTER_VALIDATE_IP)) {
+                $ip = $last;
+            }
+        }
+    }
+    return $ip;
 }
 
 // Key for hashing visitor addresses: nothing readable is stored.
@@ -783,22 +797,20 @@ function rl_parse_colors($raw)
 
 function rl_type_rules()
 {
+    $settings = rl_settings();
     return array(
-        'script' => array('ext' => 'jsx', 'max' => 2 * 1024 * 1024),
-        'style' => array('ext' => 'ai', 'max' => 40 * 1024 * 1024),
+        'script' => array('ext' => 'jsx', 'max' => $settings['max_script_mb'] * 1024 * 1024),
+        'style' => array('ext' => 'ai', 'max' => $settings['max_style_mb'] * 1024 * 1024),
     );
 }
 
-// Upload limits; config.json can override them with max_uploads_per_day and
-// max_storage_mb.
+// Upload limits from the admin page (storage/settings.json).
 function rl_upload_limits()
 {
-    $config = rl_config_raw();
-    $perDay = isset($config['max_uploads_per_day']) ? (int) $config['max_uploads_per_day'] : 20;
-    $storageMb = isset($config['max_storage_mb']) ? (int) $config['max_storage_mb'] : 2048;
+    $settings = rl_settings();
     return array(
-        'per_day' => $perDay > 0 ? $perDay : 20,
-        'storage' => ($storageMb > 0 ? $storageMb : 2048) * 1024 * 1024,
+        'per_day' => $settings['uploads_per_day'],
+        'storage' => $settings['storage_mb'] * 1024 * 1024,
     );
 }
 
@@ -853,9 +865,10 @@ function rl_looks_like_text($path)
     return is_string($raw) && $raw !== '' && strpos($raw, "\0") === false;
 }
 
+// How long an item lives after it is added or downloaded (admin page).
 function rl_life_seconds()
 {
-    return 10 * 24 * 60 * 60;
+    return rl_settings()['life_days'] * 86400;
 }
 
 function rl_expiry_time($item)
@@ -1052,7 +1065,7 @@ function rl_store_preview($id, $file)
         return false;
     }
     $size = isset($file['size']) ? (int) $file['size'] : 0;
-    if ($size < 1 || $size > 2 * 1024 * 1024) {
+    if ($size < 1 || $size > rl_settings()['max_preview_mb'] * 1024 * 1024) {
         return false;
     }
     $info = @getimagesize($file['tmp_name']);
@@ -1096,6 +1109,13 @@ function rl_create_item($user)
     $description = rl_clean_text(isset($_POST['description']) ? $_POST['description'] : '', 500);
     if ($name === '') {
         return array('ok' => false, 'error' => 'Name is required');
+    }
+    $settings = rl_settings();
+    if ($settings['maintenance']) {
+        return array('ok' => false, 'error' => 'The Marketplace is in maintenance', 'status' => 503);
+    }
+    if (empty($settings['allow_' . $type])) {
+        return array('ok' => false, 'error' => 'Uploads of this kind are turned off', 'status' => 403);
     }
     if (!rl_ensure_storage()) {
         return array('ok' => false, 'error' => 'Storage is not writable');
@@ -1161,7 +1181,7 @@ function rl_create_item($user)
             $preview = rl_store_preview($id, $_FILES['preview']);
             if ($preview === false) {
                 rl_unlink_stored($stored);
-                return array('ok' => false, 'error' => 'Preview must be a PNG or JPEG under 2 MB');
+                return array('ok' => false, 'error' => 'Preview must be a PNG or JPEG under ' . $settings['max_preview_mb'] . ' MB');
             }
             if ($preview !== '') {
                 $previewBytes = (int) $_FILES['preview']['size'];
@@ -1600,3 +1620,9 @@ function rl_panel_user($token)
     }
     return null;
 }
+
+require __DIR__ . '/inc/settings.php';
+require __DIR__ . '/inc/admin.php';
+require __DIR__ . '/inc/ai.php';
+require __DIR__ . '/inc/release.php';
+require __DIR__ . '/inc/layout.php';

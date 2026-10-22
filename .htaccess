@@ -9,7 +9,7 @@ DirectoryIndex index.php
     Require all denied
 </Files>
 
-<FilesMatch "^(lib\.php|config\.example\.json|README\.md|\.gitignore)$">
+<FilesMatch "^(lib\.php|config\.example\.json|\.gitignore)$|\.md$">
     Require all denied
 </FilesMatch>
 
@@ -18,10 +18,11 @@ DirectoryIndex index.php
     Require all denied
 </FilesMatch>
 
-# Dot files and folders (.git, .github, .gitignore) and the test suite are
-# never served; .well-known stays reachable for SSL certificates.
+# Dot files and folders (.git, .github, .gitignore), the test suite and the
+# PHP includes are never served; .well-known stays reachable for SSL certificates.
 <IfModule mod_rewrite.c>
     RewriteEngine On
     RewriteRule "(^|/)\.(?!well-known/)" - [F,L]
     RewriteRule "^tests(/|$)" - [F,L]
+    RewriteRule "^inc(/|$)" - [F,L]
 </IfModule>

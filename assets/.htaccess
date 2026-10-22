@@ -1,0 +1,7 @@
+# The site links these files with ?v=<file time>, so a replaced video or
+# poster gets a new address: browsers and the CDN may keep them for 30 days.
+<IfModule mod_headers.c>
+    <FilesMatch "\.(mp4|webm|jpg)$">
+        Header set Cache-Control "public, max-age=2592000"
+    </FilesMatch>
+</IfModule>
